@@ -1,0 +1,27 @@
+name: tf_protein_env
+
+channels:
+#  - https://levinthal:paradox@conda.rosettacommons.org
+  - conda-forge
+
+dependencies:
+  - python<=3.10
+  - numpy
+  - scipy
+  - matplotlib
+  - netcdf4
+  - jupyter
+  - jupyterlab
+  - ipykernel
+  - ipywidgets=7
+  - nglview
+  - parmed
+  - mdanalysis
+#  - pyrosetta
+  - openmm
+  - pdbfixer
+  - pip
+  - pip:
+      - tensorflow
+      - tensorflow-probability
+      - geometric-algebra-attention
