@@ -1,7 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=gen_inputs
 #SBATCH --output=gen_inputs.out
-#SBATCH --partition tres288
+#SBATCH --partition condo
+#SBATCH --qos condo
+#SBATCH --constraint jm217
 #SBATCH --nodes=1
 #SBATCH --tasks-per-node=32
 #SBATCH --time=144:00:00
