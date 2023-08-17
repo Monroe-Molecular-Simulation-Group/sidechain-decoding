@@ -2,7 +2,7 @@
 Defines functions and a command-line tool for fixing pdb files as inputs for training decoding models of residue sidechains.
 """
 
-import os
+import sys, os
 import argparse
 import json
 
@@ -186,14 +186,14 @@ def minimize_energy(pdb_file, out_fmt_str='./%s_min.pdb'):
     mm.app.PDBFile.writeFile(pdb.topology, state.getPositions(), open(out_name, 'w'))
 
 
-def main():
+def main(arg_list):
     parser = argparse.ArgumentParser(prog='prep_pdb.py',
                                      description='Cleans up each PDB in a list of PDB ids.',
                                     )
     parser.add_argument('pdbids', nargs='*')
     parser.add_argument('-f', '--file')
 
-    args = parser.parse_args()
+    args = parser.parse_args(arg_list)
 
     # If provided file, add to list of PDB ids to process
     all_pdbids = []
@@ -219,4 +219,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    main(sys.argv)

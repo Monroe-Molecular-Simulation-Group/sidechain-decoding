@@ -2,7 +2,7 @@
 Defines routines for generating training inputs and reading that data for training.
 """
 
-import os
+import sys, os
 import json
 import pickle
 import argparse
@@ -470,7 +470,7 @@ def read_dataset(files):
     return parsed_dset
 
 
-def main():
+def main(arg_list):
     parser = argparse.ArgumentParser(prog='create_inputs.py',
                                      description='Generates training inputs for all pdb files in a directory',
                                     )
@@ -479,7 +479,7 @@ def main():
     parser.add_argument('--read_dir', '-r', default='./', help="directory to read files from")
     parser.add_argument('--save_dir', '-s', default='./', help="directory to save outputs to")
 
-    args = parser.parse_args()
+    args = parser.parse_args(arg_list)
 
     # Get dictionary of modifications
     with open(args.mod_file, 'r') as f:
@@ -536,4 +536,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    main(sys.argv)
