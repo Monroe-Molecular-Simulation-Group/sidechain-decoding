@@ -470,8 +470,7 @@ def read_dataset(files):
     return parsed_dset
 
 
-if __name__ == '__main__':
-
+def main():
     parser = argparse.ArgumentParser(prog='create_inputs.py',
                                      description='Generates training inputs for all pdb files in a directory',
                                     )
@@ -535,3 +534,6 @@ if __name__ == '__main__':
                 pickle.dump(inputs[-1], open(os.path.join(args.save_dir, '%s_BAT_object.pkl'%(args.res_type)), 'wb'))
                 saved_bat_obj = True
 
+
+if __name__ == '__main__':
+    main()

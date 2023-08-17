@@ -1,6 +1,6 @@
 
 import glob
-from prep_pdb import minimize_energy
+from .prep_pdb import minimize_energy
 
 clean_files = glob.glob('clean_pdbs/*.pdb')
 

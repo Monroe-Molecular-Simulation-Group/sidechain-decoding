@@ -4,7 +4,7 @@ import tensorflow as tf
 
 import vaemolsim
 
-from data_io import read_dataset
+from .data_io import read_dataset
 
 def train_model(read_dir='./', save_prefix='./sidechain_decoder')
     files = glob.glob('%s/*.tfrecord'%read_dir)

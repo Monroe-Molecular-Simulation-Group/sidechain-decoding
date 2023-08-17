@@ -186,8 +186,7 @@ def minimize_energy(pdb_file, out_fmt_str='./%s_min.pdb'):
     mm.app.PDBFile.writeFile(pdb.topology, state.getPositions(), open(out_name, 'w'))
 
 
-if __name__ == '__main__':
-
+def main():
     parser = argparse.ArgumentParser(prog='prep_pdb.py',
                                      description='Cleans up each PDB in a list of PDB ids.',
                                     )
@@ -217,3 +216,7 @@ if __name__ == '__main__':
     # Save dictionary recording modifications
     with open('residue_modifications.json', 'w') as f:
         json.dump(mod_dict, f)
+
+
+if __name__ == '__main__':
+    main()
