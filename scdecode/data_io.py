@@ -28,12 +28,14 @@ all_ref_types = ref_atom_types + ref_res_types
 # bat_exclude_dofs = [0, 1, 2, 3, 4, 6]
 # XYZ of root atom, angles for first bond in spherical coords, first bond length
 # Will be same for ANY residue except GLY
+# Except easier to use C-CA-CB as root atoms, which means sidechain is just all
+# BAT coords except the first 9 (and this can then include the HA position)
 
 
 def inputs_from_pdb(pdb_file, res_name, mod_info,
-                    bb_atom_str='@N,CA,C,O,H,HA',
-                    not_bat_atom_str='@N,O,H',
-                    cg_atom_list=['N', 'CA', 'C', 'O', 'H', 'CB'],
+                    bb_atom_str='@N,CA,C,O,H,HA,OXT,H1,H2,H3',
+                    not_bat_atom_str='@N,O,H,OXT,H1,H2,H3',
+                    cg_atom_list=['N', 'CA', 'C', 'O', 'H', 'CB', 'OXT'],
                     rng=np.random.default_rng(),
                     ):
     """
@@ -50,12 +52,14 @@ def inputs_from_pdb(pdb_file, res_name, mod_info,
         A list of residue indices for which mutations and/or modifications, such as
         adding heavy atoms, have been made. These will not be considered for preparing
         training inputs, even if they match res_name.
-    bb_atom_str : str, default '@N,CA,C,O,H,HA'
+    bb_atom_str : str, default '@N,CA,C,O,H,HA,OXT,H1,H2,H3'
         A string following the ParmEd atom selection format specifying backbone atoms.
-    not_bat_atom_str : str, default '@C,O,H'
+        Includes the C-terminal and N-terminal backbone atoms.
+    not_bat_atom_str : str, default '@C,O,H,OXT,H1,H2,H3'
         A string following ParmEd atom selection format specifying which atoms in a residue
-        will NOT be included when generating BAT coordinates.
-    cg_atom_list : list, default ['N', 'CA', 'C', 'O', 'H', 'CB']
+        will NOT be included when generating BAT coordinates. Also excludes the special
+        atoms of terminal residues.
+    cg_atom_list : list, default ['N', 'CA', 'C', 'O', 'H', 'CB', 'OXT']
         A list of atom names that will be included in the "CG" representation of a protein.
     rng : object, default np.random.default_rng()
         Random number generator
@@ -113,10 +117,13 @@ def inputs_from_pdb(pdb_file, res_name, mod_info,
     atom_types = [ff_data.atomType[a] for a in mm_pdb.topology.atoms()]
     res_types = [templates_for_residues[r.index].name for r in mm_pdb.topology.residues()]
 
-    # Identify target residues (of right type, not modified)
+    # Identify target residues
+    # Type should match and include terminal versions of the residue (NXXX or CXXX)
+    # Terminal status only impacts backbone, not sidechain atoms, so can decode both
+    # But will still exclude modified residues (heavy atoms added)
     target_res_num = []
     for i, r in enumerate(res_types):
-        if (r == res_name) and (i not in mod_info):
+        if (res_name in r) and (i not in mod_info):
             target_res_num.append(str(i + 1))
 
     # If have no residues of desired type, stop now
@@ -189,7 +196,6 @@ def inputs_from_pdb(pdb_file, res_name, mod_info,
         bat_analysis.run()
         this_bat = bat_analysis.results.bat[0] # Includes N, CA, and CB atom information
         full_bat.append(this_bat)
-        # bat_targets.append(np.delete(this_bat, bat_exclude_dofs))
         bat_targets.append(this_bat[9:])
 
     # Clean up and return
@@ -471,7 +477,7 @@ def read_dataset(files):
 
 
 def main(arg_list):
-    parser = argparse.ArgumentParser(prog='create_inputs.py',
+    parser = argparse.ArgumentParser(prog='data_io.py',
                                      description='Generates training inputs for all pdb files in a directory',
                                     )
     parser.add_argument('mod_file', help="json file containing dictionary of residue modifications for each pdb")
@@ -536,4 +542,4 @@ def main(arg_list):
 
 
 if __name__ == '__main__':
-    main(sys.argv)
+    main(sys.argv[1:])
