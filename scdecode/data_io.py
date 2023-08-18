@@ -542,4 +542,5 @@ def main(arg_list):
 
 
 if __name__ == '__main__':
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
     main(sys.argv[1:])
