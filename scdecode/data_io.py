@@ -23,7 +23,9 @@ import tensorflow as tf
 # Define some global variables, like the forcefield used
 ff = mmapp.ForceField('amber14/protein.ff14SB.xml')
 ref_res_types = [key for key in ff._templates]
+ref_res_types.sort()
 ref_atom_types = [key for key in ff._atomTypes]
+ref_atom_types.sort()
 all_ref_types = ref_atom_types + ref_res_types
 # bat_exclude_dofs = [0, 1, 2, 3, 4, 6]
 # XYZ of root atom, angles for first bond in spherical coords, first bond length
@@ -145,13 +147,13 @@ def inputs_from_pdb(pdb_file, res_name, mod_info,
     for i, t in enumerate(atom_types):
         if t not in all_ref_types:
             raise ValueError("The atom type %s does not match any type in the force field."%t)
-        one_hot_atoms[i, :] = np.array(all_ref_types == t, dtype='int32')
+        one_hot_atoms[i, :] = np.array(np.array(all_ref_types) == t, dtype='float32')
 
     one_hot_res = np.zeros((len(res_types), len(all_ref_types)))
     for i, t in enumerate(res_types):
         if t not in all_ref_types:
             raise ValueError("The residue type %s does not match any template in the force field."%t)
-        one_hot_res[i, :] = np.array(all_ref_types == t, dtype='int32')
+        one_hot_res[i, :] = np.array(np.array(all_ref_types) == t, dtype='float32')
 
     # Now have all information for entire protein
     # Will loop over residues matching target type and select out for each
