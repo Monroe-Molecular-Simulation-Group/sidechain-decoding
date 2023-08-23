@@ -373,9 +373,12 @@ def _tf_parse_example(example_str):
                                 'inputs': tf.io.RaggedFeature(dtype=tf.string),
                                 'targets': tf.io.RaggedFeature(dtype=tf.string)}
                     )
+    # Must specify shapes for ragged tensors
+    coords_spec = tf.RaggedTensorSpec(shape=(None, 3), dtype=tf.float32, ragged_rank=0)
+    info_spec = tf.RaggedTensorSpec(shape=(None, 112), dtype=tf.float32, ragged_rank=0)
     data = tf.py_function(_create_data_from_serialized_strs,
                           (example_read['inputs'], example_read['targets']),
-                          (tf.float32, tf.float32, tf.float32, tf.float32),
+                          (tf.float32, coords_spec, info_spec, tf.float32),
                          )
     return (data[0], data[1], data[2]), data[3]
 
