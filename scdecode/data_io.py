@@ -376,11 +376,12 @@ def _tf_parse_example(example_str):
                                 'targets': tf.io.RaggedFeature(dtype=tf.string)}
                     )
     # Must specify shapes for ragged tensors
+    refs_spec = tf.TensorSpec(shape=(3,), dtype=tf.float32)
     coords_spec = tf.RaggedTensorSpec(shape=(None, 3), dtype=tf.float32, ragged_rank=0)
-    info_spec = tf.RaggedTensorSpec(shape=(None, 112), dtype=tf.float32, ragged_rank=0)
+    info_spec = tf.RaggedTensorSpec(shape=(None, len(all_ref_types)), dtype=tf.float32, ragged_rank=0)
     data = tf.py_function(_create_data_from_serialized_strs,
                           (example_read['inputs'], example_read['targets']),
-                          (tf.float32, coords_spec, info_spec, tf.float32),
+                          (refs_spec, coords_spec, info_spec, tf.float32),
                          )
     return (data[0], data[1], data[2]), data[3]
 
@@ -478,7 +479,10 @@ def read_dataset(files):
     """
     raw_dset = tf.data.TFRecordDataset(files, compression_type='GZIP')
     parsed_dset = raw_dset.map(_tf_parse_example)
-    return parsed_dset
+    # Also need to ensure shape of target values
+    target_shape = next(iter(parsed_dset))[1].shape
+    shaped_dset = parsed_dset.map(lambda inputs, targets: (inputs, tf.ensure_shape(targets, target_shape)))
+    return shaped_dset
 
 
 def main(arg_list):

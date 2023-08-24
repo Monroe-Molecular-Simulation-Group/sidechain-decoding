@@ -13,7 +13,7 @@ import vaemolsim
 from .data_io import read_dataset
 
 
-def build_model(n_atoms, embed_dim=20):
+def build_model(n_atoms, embed_dim=20, hidden_dim=100):
     """
     Defines the model that will be used for side-chain decoding
     """
@@ -26,16 +26,24 @@ def build_model(n_atoms, embed_dim=20):
     latent_dist = vaemolsim.dists.IndependentBlockwise(n_atoms * 3,
                    [tfp.distributions.Normal] * (2 * n_atoms) + [tfp.distributions.VonMises] * n_atoms,
                   ) # Bonds and angles modeled as normal distributions, torsions as von Mises
-    flow = vaemolsim.flows.RQSSplineMAF(rqs_params={'bin_range': [-np.pi, np.pi],
+    flow = vaemolsim.flows.RQSSplineMAF(num_blocks=3, # Three RQS flows, middle with "random" ordering
+                                        order_seed=42, # Setting seed makes order deterministic (so can load weights)
+                                        rqs_params={'bin_range': [-np.pi, np.pi], # Range should work for bonds and angles, too
+                                                    'num_bins': 10, # Can place spline knot every ~0.628 units
+                                                    'hidden_dim': hidden_dim,
                                                     'conditional': True,
                                                     'conditional_event_shape': embed_dim},
-                              batch_norm=True,
-                             ) # Transform within -np.pi to np.pi... should work for bonds and angles
+                                        batch_norm=True,
+                                       ) 
     decoder_dist = vaemolsim.dists.FlowedDistribution(flow, latent_dist)
     _ = decoder_dist.flow(tf.ones([1, n_atoms * 3]),
                           conditional_input=tf.ones([1, embed_dim])
                          ) # Build flow
-    decoder = vaemolsim.models.MappingToDistribution(decoder_dist, name='decoder')
+    map_embed_to_dist = vaemolsim.mappings.FCDeepNN(decoder_dist.params_size(),
+                                                    hidden_dim=hidden_dim,
+                                                    batch_norm=True,
+                                                   )
+    decoder = vaemolsim.models.MappingToDistribution(decoder_dist, mapping=map_embed_to_dist, name='decoder')
 
     # Finish full model
     model = vaemolsim.models.BackmappingOnly(mask_and_embed, decoder)
@@ -57,13 +65,13 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain_decoder'):
             val_files.append(f)
         else:
             train_files.append(f)
-    train_dset = read_dataset(train_files)
-    val_dset = read_dataset(val_files)
+    train_dset = read_dataset(train_files).take(200)
+    val_dset = read_dataset(val_files).take(40)
 
     # Should shuffle and batch training dataset (also set up prefetching)
     # For validation, just batch and prefetch
-    train_dset = train_dset.shuffle(1000).ragged_batch(200).prefetch(tf.data.AUTOTUNE)
-    val_dset = val_dset.ragged_batch(200).prefetch(tf.data.AUTOTUNE)
+    train_dset = train_dset.shuffle(100).ragged_batch(20).prefetch(tf.data.AUTOTUNE)
+    val_dset = val_dset.ragged_batch(20).prefetch(tf.data.AUTOTUNE)
 
     # Set up model
     # First need number of degrees of freedom to predict from BAT analysis object
@@ -79,7 +87,7 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain_decoder'):
                  )
 
     # Any callbacks needed? Shouldn't really need annealing
-    callback_list = [tf.keras.callbacks.ModelCheckpoint(os.path.join(save_dir, '%s_ckpt'%save_name, 'weights.{epoch:02d}-{val_loss:.2f}.hdf5'),
+    callback_list = [tf.keras.callbacks.ModelCheckpoint(os.path.join(save_dir, '%s_decoder'%save_name, 'weights-%s.h5'%save_name),
                                                         monitor='val_loss',
                                                         mode='min',
                                                         save_best_only=True,
@@ -89,7 +97,9 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain_decoder'):
                     ]
 
     # Fit the model
-    history = model.fit(train_dset, epochs=10, validation_data=val_dset, callbacks=callback_list)
+    history = model.fit(train_dset, epochs=2, validation_data=val_dset, callbacks=callback_list)
+
+    print(model.summary())
 
     # Save history
     np.savez(os.path.join(save_dir, '%s_history.npz'%save_name), **history.history)
