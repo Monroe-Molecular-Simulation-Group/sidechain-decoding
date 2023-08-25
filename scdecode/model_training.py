@@ -70,8 +70,8 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain_decoder'):
 
     # Should shuffle and batch training dataset (also set up prefetching)
     # For validation, just batch and prefetch
-    train_dset = train_dset.shuffle(1000).ragged_batch(200).prefetch(tf.data.AUTOTUNE)
-    val_dset = val_dset.ragged_batch(200).prefetch(tf.data.AUTOTUNE)
+    train_dset = train_dset.shuffle(1000).ragged_batch(64, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
+    val_dset = val_dset.ragged_batch(64).prefetch(tf.data.AUTOTUNE)
 
     # Set up model
     # First need number of degrees of freedom to predict from BAT analysis object
