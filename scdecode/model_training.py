@@ -18,7 +18,7 @@ def build_model(n_atoms, embed_dim=20, hidden_dim=100):
     Defines the model that will be used for side-chain decoding
     """
     # Define distance-based embedding
-    mask_dist = vaemolsim.mappings.DistanceSelection(6.0, 100) # 6 Angstrom cutoff, no more then 100 particles included
+    mask_dist = vaemolsim.mappings.DistanceSelection(5.0, 50) # 5 Angstrom cutoff, no more then 50 particles included
     particle_embed = vaemolsim.mappings.ParticleEmbedding(embed_dim)
     mask_and_embed = vaemolsim.mappings.LocalParticleDescriptors(mask_dist, particle_embed)
 
@@ -29,7 +29,7 @@ def build_model(n_atoms, embed_dim=20, hidden_dim=100):
     flow = vaemolsim.flows.RQSSplineMAF(num_blocks=3, # Three RQS flows, middle with "random" ordering
                                         order_seed=42, # Setting seed makes order deterministic (so can load weights)
                                         rqs_params={'bin_range': [-np.pi, np.pi], # Range should work for bonds and angles, too
-                                                    'num_bins': 10, # Can place spline knot every ~0.628 units
+                                                    'num_bins': 20, # Can place spline knot every ~0.314 units
                                                     'hidden_dim': hidden_dim,
                                                     'conditional': True,
                                                     'conditional_event_shape': embed_dim},
@@ -65,13 +65,13 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain_decoder'):
             val_files.append(f)
         else:
             train_files.append(f)
-    train_dset = read_dataset(train_files).take(200)
-    val_dset = read_dataset(val_files).take(40)
+    train_dset = read_dataset(train_files)
+    val_dset = read_dataset(val_files)
 
     # Should shuffle and batch training dataset (also set up prefetching)
     # For validation, just batch and prefetch
-    train_dset = train_dset.shuffle(100).ragged_batch(20).prefetch(tf.data.AUTOTUNE)
-    val_dset = val_dset.ragged_batch(20).prefetch(tf.data.AUTOTUNE)
+    train_dset = train_dset.shuffle(1000).ragged_batch(200).prefetch(tf.data.AUTOTUNE)
+    val_dset = val_dset.ragged_batch(200).prefetch(tf.data.AUTOTUNE)
 
     # Set up model
     # First need number of degrees of freedom to predict from BAT analysis object
@@ -87,7 +87,7 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain_decoder'):
                  )
 
     # Any callbacks needed? Shouldn't really need annealing
-    callback_list = [tf.keras.callbacks.ModelCheckpoint(os.path.join(save_dir, '%s_decoder'%save_name, 'weights-%s.h5'%save_name),
+    callback_list = [tf.keras.callbacks.ModelCheckpoint(os.path.join(save_dir, '%s_decoder'%save_name, '%s_weights.ckpt'%save_name),
                                                         monitor='val_loss',
                                                         mode='min',
                                                         save_best_only=True,
@@ -97,7 +97,7 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain_decoder'):
                     ]
 
     # Fit the model
-    history = model.fit(train_dset, epochs=2, validation_data=val_dset, callbacks=callback_list)
+    history = model.fit(train_dset, epochs=10, validation_data=val_dset, callbacks=callback_list)
 
     print(model.summary())
 
