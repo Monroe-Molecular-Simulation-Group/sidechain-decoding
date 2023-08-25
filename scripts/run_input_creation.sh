@@ -5,7 +5,7 @@
 #SBATCH --qos condo
 #SBATCH --constraint jm217
 #SBATCH --nodes=1
-#SBATCH --tasks-per-node=32
+#SBATCH --ntasks-per-node=32
 #SBATCH --time=144:00:00
 
 echo "Starting time is $(date)"
