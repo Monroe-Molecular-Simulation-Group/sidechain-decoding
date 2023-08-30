@@ -230,24 +230,17 @@ def xyz_from_bat(bat_coords, bat_obj):
     return np.array(xyz_coords)
 
 
-# Need to fix this function, carefully thinking about how should work
-# Want to instead use N, CA, and CB positions as root atoms for BAT analysis
-# Trickier with N
-# But also, need to think about when need to fill in full BAT coords obtain XYZ coords
-# What is use case?
-def fill_in_bat(partial_bat, ca_pos, cb_pos):
+def fill_in_bat(partial_bat, root_pos):
     """
-    Recreates a full set of BAT coordinates from a partial set and CA and CB atom positions.
+    Recreates a full set of BAT coordinates from a partial set and the root atom positions.
 
     Parameters
     ----------
     partial_bat : NumPy array
-        The partial set of BAT coordinates, not including the CA or CB atom positions.
-    ca_pos : NumPy array
-        The XYZ coordinate of the alpha carbon, which is the root of the BAT analysis.
-    cb_pos : NumPy array
-        The XYZ coordinate of the beta carbon, which is the secondary atom in the BAT
-        analysis.
+        The partial set of BAT coordinates, not including the root atom (first 3) coordinates.
+    root_pos : NumPy array
+        A N_frames by 3 by 3 array of the positions of the root atoms. For most residues,
+        this will be C, CA, and CB, but may be different for something like GLY.
 
     Returns
     -------
@@ -256,13 +249,39 @@ def fill_in_bat(partial_bat, ca_pos, cb_pos):
         locations, which is needed for converting back to XYZ coordinates for all
         atoms in a sidechain.
     """
-    diff = cb_pos - ca_pos
-    r = np.sqrt(np.sum(diff*diff, axis=-1))
-    polar = np.arccos(diff[..., 2] / r)
-    azimuthal = np.arctan2(diff[..., 1], diff[..., 0])
-    full_bat = np.zeros((partial_bat.shape[0], 6+partial_bat.shape[1]), dtype='float32')
-    full_bat = np.hstack([ca_pos, azimuthal, polar, partial_bat[..., 0], r, partial_bat[..., 1:]])
-    return full_bat
+    if len(root_pos.shape) == 2:
+        root_pos = np.expand_dims(root_pos, 0)
+    elif len(root_pos.shape) == 3:
+        pass
+    else:
+        raise ValueError('Positions of root atoms must be N_batchx3x3 or 3x3 (if have no batch dimension).')
+
+    if len(partial_bat.shape) == 1:
+        partial_bat = np.expand_dims(partial_bat, 0)
+
+    n_batch = root_pos.shape[0]
+    p0 = root_pos[:, 0, :]
+    p1 = root_pos[:, 1, :]
+    p2 = root_pos[:, 2, :]
+    v01 = p1 - p0
+    v21 = p1 - p2
+    r01 = np.sqrt(np.sum(v01 * v01, axis=-1))
+    r12 = np.sqrt(np.sum(v21 * v21, axis=-1))
+    a012 = np.arccos(np.sum(v01 * v21, axis=-1) / (r01 * r12))
+    polar = np.arccos(v01[:, 2] / r01)
+    azimuthal = np.arctan2(v01[:, 1], v01[:, 0])
+    cp = np.cos(azimuthal)
+    sp = np.sin(azimuthal)
+    ct = np.cos(polar)
+    st = np.sin(polar)
+    Rz = np.array([[cp * ct, ct * sp, -st], [-sp, cp, np.zeros(n_batch)], [cp * st, sp * st, ct]])
+    Rz = np.transpose(Rz, axes=(2, 0, 1))
+    pos2 = np.squeeze(Rz @ np.expand_dims(p2 - p1, -1), axis=-1)
+    omega = np.arctan2(pos2[:, 1], pos2[:, 0])
+    full_bat = np.hstack([p0, azimuthal[:, None], polar[:, None], omega[:, None],
+                          r01[:, None], r12[:, None], a012[:, None], partial_bat])
+    
+    return np.squeeze(full_bat)
 
 
 def _create_example(refs, coords, infos, targets):
