@@ -9,19 +9,10 @@ import openmm as mm
 from . import data_io
 
 
-def bat_summary_statistics(files):
+def build_bat_histograms(all_bat):
     """
-    Performs summary statistics over the dataset of BAT coordinates.
-    (as a list of .npy files)
-
-    Focuses on building histograms of all BAT degrees of freedom to be predicted.
+    Creates and collects histograms for each column of a numpy array of BAT coordinates.
     """
-    all_bat = []
-    for f in files:
-        all_bat.append(np.load(f)[:, 9:])
-
-    all_bat = np.vstack(all_bat)
-
     num_atoms = int(all_bat.shape[1] / 3)
 
     all_hist = {}
@@ -38,6 +29,22 @@ def bat_summary_statistics(files):
         all_edges["%s_edges"%label] = this_edges
 
     return all_hist, all_edges
+
+
+def bat_summary_statistics(files):
+    """
+    Performs summary statistics over the dataset of BAT coordinates.
+    (as a list of .npy files)
+
+    Focuses on building histograms of all BAT degrees of freedom to be predicted.
+    """
+    all_bat = []
+    for f in files:
+        all_bat.append(np.load(f)[:, 9:])
+
+    all_bat = np.vstack(all_bat)
+
+    return build_bat_histograms(all_bat)
 
 
 def config_energy(coords, sim_obj):
