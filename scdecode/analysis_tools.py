@@ -5,6 +5,7 @@ import glob, pickle
 import numpy as np
 
 import openmm as mm
+import parmed as pmd
 
 from . import data_io
 
