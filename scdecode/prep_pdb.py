@@ -182,7 +182,7 @@ def minimize_energy(pdb_file, out_fmt_str='./%s_min.pdb'):
     simulation = mm.app.Simulation(pdb.topology, system, integrator)
     simulation.context.setPositions(pdb.positions)
     simulation.minimizeEnergy(maxIterations=1000)
-    state = simulation.context.getState(getPositions=True, enforcePeriodicBox=True)
+    state = simulation.context.getState(getPositions=True, getEnergy=True, enforcePeriodicBox=False)
     mm.app.PDBFile.writeFile(pdb.topology, state.getPositions(), open(out_name, 'w'))
 
 

@@ -60,7 +60,7 @@ def inputs_from_pdb(pdb_file, res_name, mod_info,
     bb_atom_str : str, default '@N,CA,C,O,H,HA,OXT,H1,H2,H3'
         A string following the ParmEd atom selection format specifying backbone atoms.
         Includes the C-terminal and N-terminal backbone atoms.
-    not_bat_atom_str : str, default '@C,O,H,OXT,H1,H2,H3'
+    not_bat_atom_str : str, default '@N,O,H,OXT,H1,H2,H3'
         A string following ParmEd atom selection format specifying which atoms in a residue
         will NOT be included when generating BAT coordinates. Also excludes the special
         atoms of terminal residues.
@@ -87,7 +87,7 @@ def inputs_from_pdb(pdb_file, res_name, mod_info,
         in coord_inputs.
     full_bat : NumPy array
         Array of the full BAT representation for the residues to train on. This includes the
-        location of the backbone nitrogen (N), alpha carbon (CA) and beta carbon (CB), which
+        location of the backbone carbon (C), alpha carbon (CA) and beta carbon (CB), which
         are not part of what is decoded. However, these locations are necessary to convert
         back from BAT to XYZ coordinates.
     bat_targets : list of NumPy arrays

@@ -55,7 +55,7 @@ def config_energy(coords, sim_obj):
         coords = coords * mm.unit.angstrom
     sim_obj.context.setPositions(coords)
     state = sim_obj.context.getState(getEnergy=True)
-    return state.getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
+    return state.getPotentialEnergy().value_in_unit(mm.unit.kilojoules_per_mole)
 
 
 def pdb_energy(pdb_file):
