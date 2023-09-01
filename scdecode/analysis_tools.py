@@ -77,7 +77,7 @@ def check_cg(xyz_coords, bat_obj):
     """
     working_ag = bat_obj.atoms.convert_to('PARMED')
     working_ag.coordinates = xyz_coords
-    sc_ag = working_ag['!(@N,CA,C,O,H,HA,OXT,H1,H2,H3)']
+    sc_ag = working_ag['!(%s)'%data_io.backbone_atoms]
     masses = np.array([a.mass for a in sc_ag])
     return pmd.geometry.center_of_mass(sc_ag.coordinates, masses)
 

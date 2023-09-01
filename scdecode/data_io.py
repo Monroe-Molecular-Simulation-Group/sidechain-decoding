@@ -32,12 +32,15 @@ all_ref_types = np.array(ref_atom_types + ref_res_types)
 # Will be same for ANY residue except GLY
 # Except easier to use C-CA-CB as root atoms, which means sidechain is just all
 # BAT coords except the first 9 (and this can then include the HA position)
+backbone_atoms ='@N,CA,C,O,H,HA,OXT,H1,H2,H3'
+not_bat_atoms = '@N,O,H,OXT,H1,H2,H3'
+cg_atoms = '@N,CA,C,O,H,CB,OXT'
 
 
 def inputs_from_pdb(pdb_file, res_name, mod_info,
-                    bb_atom_str='@N,CA,C,O,H,HA,OXT,H1,H2,H3',
-                    not_bat_atom_str='@N,O,H,OXT,H1,H2,H3',
-                    cg_atom_list=['N', 'CA', 'C', 'O', 'H', 'CB', 'OXT'],
+                    bb_atom_str=backbone_atoms,
+                    not_bat_atom_str=not_bat_atoms,
+                    cg_atom_list=cg_atoms[1:].split(','),
                     rng=np.random.default_rng(),
                     ):
     """
