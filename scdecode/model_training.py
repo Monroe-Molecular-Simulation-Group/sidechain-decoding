@@ -33,7 +33,7 @@ def build_model(n_atoms, embed_dim=20, hidden_dim=100):
                                                     'hidden_dim': hidden_dim,
                                                     'conditional': True,
                                                     'conditional_event_shape': embed_dim},
-                                        batch_norm=True,
+                                        batch_norm=False, # Batch norm messes with fixed domain for periodic flows
                                        ) 
     decoder_dist = vaemolsim.dists.FlowedDistribution(flow, latent_dist)
     _ = decoder_dist.flow(tf.ones([1, n_atoms * 3]),
@@ -41,7 +41,7 @@ def build_model(n_atoms, embed_dim=20, hidden_dim=100):
                          ) # Build flow
     map_embed_to_dist = vaemolsim.mappings.FCDeepNN(decoder_dist.params_size(),
                                                     hidden_dim=hidden_dim,
-                                                    batch_norm=True,
+                                                    batch_norm=False, # Not deep enough to benefit
                                                    )
     decoder = vaemolsim.models.MappingToDistribution(decoder_dist, mapping=map_embed_to_dist, name='decoder')
 

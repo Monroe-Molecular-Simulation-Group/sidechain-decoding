@@ -537,8 +537,12 @@ def main(arg_list):
     for p in pdb_list:
         pdb_id = os.path.split(p)[-1].split('.pdb')[0]
         this_mod = mod_info[pdb_id]
-
-        inputs = inputs_from_pdb(p, args.res_type, this_mod, rng=rng)
+       
+        try:
+            inputs = inputs_from_pdb(p, args.res_type, this_mod, rng=rng)
+        except Exception as exc:
+            print('On file %s, failed with exception:\n%s'%(p, str(exc)))
+            inputs = None
 
         # Check to make sure had residues to work with
         if inputs is not None:

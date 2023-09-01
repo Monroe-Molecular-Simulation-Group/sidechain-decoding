@@ -30,14 +30,14 @@ resnames=("ALA" "ARG" "ASH" "ASN" "ASP" "CYM" "CYS" "GLH" "GLN" "GLU" "HID" "HIE
 for r in ${resnames[@]}
 do
     mkdir ${savedir}/${r}
-    srun -n 1 -c 1 -o gen_inputs_${r}.out --exact --export=ALL python -m scdecode.data_io ${datadir}/clean_pdbs/residue_modifications.json ${r} -r ${datadir}/clean_pdbs -s ${savedir}/${r} &
+    srun -n 1 -c 1 -o gen_inputs_${r}.out --exact --export=ALL python -m scdecode.data_io ${datadir}/energy_min_pdbs/residue_modifications.json ${r} -r ${datadir}/energy_min_pdbs -s ${savedir}/${r} &
     sleep 2
 done
 wait
 
 for r in ${resnames[@]}
 do
-    mv ${savedir}/${r} ${datadir}/training_inputs
+    mv ${savedir}/${r} ${datadir}/energy_min_training_inputs
 done
 
 echo "Ended at time $(date)"
