@@ -48,28 +48,55 @@ def bat_summary_statistics(files):
     return build_bat_histograms(all_bat)
 
 
-def config_energy(coords, sim_obj):
+# To see which residues having trouble, or if atomic overlaps, helps to have forces
+# Have optional flag to return
+# That way, can visualize where have high energies/forces by coloring by force if want
+def config_energy(coords, sim_obj, compute_forces=False):
     """
     Computes energy of a configuration given a simulation object.
     """
     if not isinstance(coords, mm.unit.Quantity):
         coords = coords * mm.unit.angstrom
     sim_obj.context.setPositions(coords)
-    state = sim_obj.context.getState(getEnergy=True)
-    return state.getPotentialEnergy().value_in_unit(mm.unit.kilojoules_per_mole)
+    state = sim_obj.context.getState(getEnergy=True, getForces=compute_forces)
+    if compute_forces:
+        return (state.getPotentialEnergy().value_in_unit(mm.unit.kilojoules_per_mole),
+                np.array(state.getForces().value_in_unit(mm.unit.kilojoules_per_mole / mm.unit.angstrom)),
+               )
+    else:
+        return state.getPotentialEnergy().value_in_unit(mm.unit.kilojoules_per_mole)
 
 
-def pdb_energy(pdb_file):
+def sim_from_pdb(pdb_file):
     """
-    Energy from a pdb file.
+    Creates an OpenMM simulation object from a pdb file.
+    Also returns pdb object.
     """
     pdb = mm.app.PDBFile(pdb_file)
-    forcefield = mm.app.ForceField('amber14/protein.ff14SB.xml')
+    forcefield = data_io.ff
     system = forcefield.createSystem(pdb.topology,
                                      nonbondedMethod=mm.app.NoCutoff)
     integrator = mm.LangevinIntegrator(300*mm.unit.kelvin, 1/mm.unit.picosecond, 0.004*mm.unit.picoseconds)
     simulation = mm.app.Simulation(pdb.topology, system, integrator)
-    return config_energy(pdb.positions, simulation)
+    simulation.context.setPositions(pdb.positions)
+    return pdb, simulation
+
+
+def pdb_energy(pdb_file, compute_forces=False):
+    """
+    Energy from a pdb file.
+    """
+    pdb, simulation = sim_from_pdb(pdb_file)
+    return config_energy(pdb.positions, simulation, compute_forces=compute_forces)
+
+
+def pdb_energy_decomp(pdb_file):
+    """
+    Full decomposition of energies in pdb file using Parmed
+    """
+    pdb, sim = sim_from_pdb(pdb_file)
+    struc = pmd.openmm.load_topology(pdb.topology, system=sim.system, xyz=pdb.positions)
+    return pmd.openmm.energy_decomposition_system(struc, sim.system, nrg=mm.unit.kilojoules_per_mole)
 
 
 def check_cg(xyz_coords, bat_obj):
