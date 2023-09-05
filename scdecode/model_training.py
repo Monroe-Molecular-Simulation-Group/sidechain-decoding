@@ -50,7 +50,7 @@ def build_model(n_atoms, embed_dim=20, hidden_dim=100):
     return model
 
 
-def train_model(read_dir='./', save_dir='./', save_name='sidechain_decoder'):
+def train_model(read_dir='./', save_dir='./', save_name='sidechain'):
     """
     Creates and trains a model for decoding a sidechain.
     """
