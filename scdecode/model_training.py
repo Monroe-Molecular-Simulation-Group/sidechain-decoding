@@ -97,7 +97,7 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain_decoder'):
                     ]
 
     # Fit the model
-    history = model.fit(train_dset, epochs=10, validation_data=val_dset, callbacks=callback_list)
+    history = model.fit(train_dset, epochs=10, validation_data=val_dset, verbose=2, callbacks=callback_list)
 
     print(model.summary())
 
