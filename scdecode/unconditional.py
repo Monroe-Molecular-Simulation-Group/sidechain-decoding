@@ -187,7 +187,7 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain'):
                     ]
 
     # Fit the model
-    history = model.fit(x=train_data, y=train_data, epochs=10, verbose=1, callbacks=callback_list,
+    history = model.fit(x=train_data, y=train_data, epochs=10, verbose=2, callbacks=callback_list,
                         batch_size=64, validation_split=0.1, shuffle=True,
                        )
 
