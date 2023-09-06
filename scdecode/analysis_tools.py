@@ -1,6 +1,8 @@
 """Functions for performing analysis of backmapping models."""
 
-import glob, pickle
+import sys, os
+import glob
+import argparse
 
 import numpy as np
 
@@ -46,6 +48,25 @@ def bat_summary_statistics(files):
     all_bat = np.vstack(all_bat)
 
     return build_bat_histograms(all_bat)
+
+
+def compute_bat_stats(arg_list):
+    """
+    Command line tool for computing BAT distributions.
+    """
+    parser = argparse.ArgumentParser(prog='analysis_tools.compute_bat_stats',
+                                     description='Computes histograms for target BAT coordinates from npy files.',
+                                    )
+    parser.add_argument('--read_dir', '-r', default='./', help='directory to read files from')
+    parser.add_argument('--save_file', '-s', default='bat_stats.npz', help='location/name of file to save to')
+
+    args = parser.parse_args(arg_list)
+
+    files = glob.glob('%s/*.npy'%args.read_dir)
+
+    hist_dict, edges_dict = bat_summary_statistics(files)
+
+    np.savez(args.save_file, **hist_dict, **edges_dict)
 
 
 # To see which residues having trouble, or if atomic overlaps, helps to have forces
@@ -116,3 +137,10 @@ def check_cg_from_bat(bat_coords, bat_obj):
     """
     xyz_coords = data_io.xyz_from_bat(bat_coords, bat_obj)
     return check_cg(xyz_coords, bat_obj)
+
+
+if __name__ == "__main__":
+    if sys.argv[1] == 'bat_stats':
+        compute_bat_stats(sys.argv[2:])
+    else:
+        print("Argument \'%s\' unrecognized. For the first argument, select \'bat_stats\' or nothing.")
