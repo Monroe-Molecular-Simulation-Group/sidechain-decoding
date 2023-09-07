@@ -269,6 +269,7 @@ def main_train(arg_list):
     
 if __name__ == '__main__':
     if sys.argv[1] == 'gen_input':
+        os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
         main_gen_input(sys.argv[2:])
     elif sys.argv[1] == 'train':
         main_train(sys.argv[2:])
