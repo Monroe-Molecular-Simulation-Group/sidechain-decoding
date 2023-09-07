@@ -3,13 +3,17 @@
 import sys, os
 import glob
 import argparse
+import pickle
 
 import numpy as np
+import tensorflow as tf
 
 import openmm as mm
 import parmed as pmd
 
-from . import data_io
+import vaemolsim
+
+from . import data_io, model_training, unconditional
 
 
 def build_bat_histograms(all_bat):
@@ -120,6 +124,82 @@ def pdb_energy_decomp(pdb_file):
     return pmd.openmm.energy_decomposition_system(struc, sim.system, nrg=mm.unit.kilojoules_per_mole)
 
 
+def xyz_from_bat(bat_coords, bat_obj):
+    """
+    Loops over many BAT coordinates to convert back to Cartesian.
+
+    Parameters
+    ----------
+    bat_coords : NumPy array
+        The full set of BAT coordinates for a specific residue/sidechain.
+    bat_obj : MDAnalysis BAT analysis object
+        The BAT analysis object that can convert between BAT and Cartesian.
+
+    Returns
+    -------
+    xyz_coords : NumPy array
+        The Cartesian coordinates of the residue/sidechain.
+    """
+    xyz_coords = []
+    for bc in bat_coords:
+        xyz_coords.append(bat_obj.Cartesian(bc))
+    return np.array(xyz_coords)
+
+
+def fill_in_bat(partial_bat, root_pos):
+    """
+    Recreates a full set of BAT coordinates from a partial set and the root atom positions.
+
+    Parameters
+    ----------
+    partial_bat : NumPy array
+        The partial set of BAT coordinates, not including the root atom (first 3) coordinates.
+    root_pos : NumPy array
+        A N_frames by 3 by 3 array of the positions of the root atoms. For most residues,
+        this will be C, CA, and CB, but may be different for something like GLY.
+
+    Returns
+    -------
+    full_bat : NumPy array
+        The full set of BAT coordinates, including information on the CA and CB atom
+        locations, which is needed for converting back to XYZ coordinates for all
+        atoms in a sidechain.
+    """
+    if len(root_pos.shape) == 2:
+        root_pos = np.expand_dims(root_pos, 0)
+    elif len(root_pos.shape) == 3:
+        pass
+    else:
+        raise ValueError('Positions of root atoms must be N_batchx3x3 or 3x3 (if have no batch dimension).')
+
+    if len(partial_bat.shape) == 1:
+        partial_bat = np.expand_dims(partial_bat, 0)
+
+    n_batch = root_pos.shape[0]
+    p0 = root_pos[:, 0, :]
+    p1 = root_pos[:, 1, :]
+    p2 = root_pos[:, 2, :]
+    v01 = p1 - p0
+    v21 = p1 - p2
+    r01 = np.sqrt(np.sum(v01 * v01, axis=-1))
+    r12 = np.sqrt(np.sum(v21 * v21, axis=-1))
+    a012 = np.arccos(np.sum(v01 * v21, axis=-1) / (r01 * r12))
+    polar = np.arccos(v01[:, 2] / r01)
+    azimuthal = np.arctan2(v01[:, 1], v01[:, 0])
+    cp = np.cos(azimuthal)
+    sp = np.sin(azimuthal)
+    ct = np.cos(polar)
+    st = np.sin(polar)
+    Rz = np.array([[cp * ct, ct * sp, -st], [-sp, cp, np.zeros(n_batch)], [cp * st, sp * st, ct]])
+    Rz = np.transpose(Rz, axes=(2, 0, 1))
+    pos2 = np.squeeze(Rz @ np.expand_dims(p2 - p1, -1), axis=-1)
+    omega = np.arctan2(pos2[:, 1], pos2[:, 0])
+    full_bat = np.hstack([p0, azimuthal[:, None], polar[:, None], omega[:, None],
+                          r01[:, None], r12[:, None], a012[:, None], partial_bat])
+    
+    return np.squeeze(full_bat)
+
+
 def check_cg(xyz_coords, bat_obj):
     """
     Calculates the coarse-grained site position given Cartesian coordinates of the BAT atoms.
@@ -135,12 +215,129 @@ def check_cg_from_bat(bat_coords, bat_obj):
     """
     Calculates the coarse-grained site position from BAT coordinates.
     """
-    xyz_coords = data_io.xyz_from_bat(bat_coords, bat_obj)
+    xyz_coords = xyz_from_bat(bat_coords, bat_obj)
     return check_cg(xyz_coords, bat_obj)
+
+
+def analyze_model(arg_list):
+    """
+    Command line tool for analyzing a decoding model..
+    """
+    parser = argparse.ArgumentParser(prog='analysis_tools.analyze_model',
+                                     description='Computes histograms for various decoded BAT coordinate distributions and CG coords as well.',
+                                    )
+    parser.add_argument('res_type', help='residue type to work with')
+    parser.add_argument('--read_dir', '-r', default='./', help='directory to read files from')
+    parser.add_argument('--model_ckpt', '-m', default='./', help='model checkpoint file path')
+    parser.add_argument('--save_prefix', '-s', default=None, help='prefix for files that will be saved')
+    parser.add_argument('--rng_seed', default=42, type=int, help='random number seed for selecting configs')
+    parser.add_argument('--unconditional', action='store_true', help='whether or not model is unconditional')
+
+    args = parser.parse_args(arg_list)
+
+    if args.save_prefix is None:
+        args.save_prefix = args.res_type
+
+    # Start by identifying files with full BAT distributions and read in
+    full_bat_files = glob.glob('%s/*.npy'%args.read_dir)
+    full_bat_files.sort()
+    full_bat_files = full_bat_files
+    full_bat = np.vstack([np.load(f) for f in full_bat_files]).astype('float32')
+
+    # Save BAT data as reference distribution
+    ref_hists, ref_edges = build_bat_histograms(full_bat)
+    np.savez('%s_BAT_data.npz'%args.save_prefix, **ref_hists, **ref_edges)
+
+    # Next identify training files and load dataset without any batching
+    if args.unconditional:
+        # Unless working unconditional stuff...
+        # Then dset is just the full_bat stuff
+        dset = tf.data.Dataset.from_tensor_slices((full_bat, full_bat))
+    else:
+        train_files = glob.glob('%s/*.tfrecord'%args.read_dir)
+        train_files.sort()
+        train_files = train_files
+        dset = data_io.read_dataset(train_files)
+        # Well, actually still need to ragged batch with batchsize of 1
+        dset = dset.ragged_batch(1)
+
+    # Load the BAT analysis object
+    bat_obj_file = glob.glob('%s/*.pkl'%args.read_dir)[0]
+    with open(bat_obj_file, 'rb') as f:
+        bat_obj = pickle.load(f)
+
+    # Create the appropriate model
+    n_atoms = len(bat_obj._torsions) # Will also be number of bonds, angles, and torsions
+    if args.unconditional:
+        model = unconditional.build_model(n_atoms)
+    else:
+        model = model_training.build_model(n_atoms)
+
+    # Compile, build by passing through one sample, and load weights
+    model.compile(tf.keras.optimizers.Adam(),
+                  loss=vaemolsim.losses.LogProbLoss(),
+                 )
+    _ = model(next(iter(dset))[0])
+    model.load_weights(args.model_ckpt).expect_partial()
+
+    # Want to select 10 random training examples to produce MANY samples from
+    # Do by selecting indices
+    rng = np.random.default_rng(seed=args.rng_seed)
+    extra_sample_inds = rng.choice(full_bat.shape[0], size=10, replace=False)
+    print('Training examples at the following indices will be sampled extra: %s'%str(extra_sample_inds))
+
+    # Loop over dataset and decode
+    # Not very efficient, because not batching
+    # But simpler because will match up easier with full_bat data
+    all_samples = []
+    all_cg_diffs = []
+    extra_sample_count = 1
+    extra_sample_hists = {}
+    extra_sample_edges = {}
+    for i, (inputs, target) in enumerate(dset):
+        # Get decoding distribution and sample from it
+        dist = model(inputs)
+        sample = dist.sample().numpy()
+        all_samples.append(sample)
+
+        # From this sample, obtain CG bead location and get distance from reference
+        if not args.unconditional:
+            cg_pos = check_cg_from_bat(np.hstack([full_bat[[i,], :9], sample]), bat_obj)
+            all_cg_diffs.append(cg_pos - inputs[0].numpy())
+
+        if i in extra_sample_inds:
+            # Sample extra samples
+            extra_samples = np.squeeze(dist.sample(10000))
+            this_hist, this_edges = build_bat_histograms(extra_samples)
+            # Once have histograms, label uniquely with keys
+            for k in this_hist.keys():
+                extra_sample_hists['example%i_%s'%(extra_sample_count, k)] = this_hist[k]
+                extra_sample_edges['example%i_%s_edges'%(extra_sample_count, k)] = this_edges[k+'_edges']
+            extra_sample_count += 1 
+
+    # Produce and save distributions of BAT samples
+    all_samples = np.vstack(all_samples)
+    m_hists, m_edges = build_bat_histograms(all_samples)
+    np.savez('%s_BAT_model.npz'%args.save_prefix, **m_hists, **m_edges)
+
+    # And differences from CG reference (if unconditional and can compute)
+    if len(all_cg_diffs) != 0:
+        all_cg_diffs = np.vstack(all_cg_diffs)
+        diff_hist_x, diff_edges_x = np.histogram(all_cg_diffs[:, 0], bins='auto')
+        diff_hist_y, diff_edges_y = np.histogram(all_cg_diffs[:, 1], bins='auto')
+        diff_hist_z, diff_edges_z = np.histogram(all_cg_diffs[:, 2], bins='auto')
+        np.savez('%s_CG_diffs.npz'%args.save_prefix,
+                 x_hist=diff_hist_x, y_hist=diff_hist_y, z_hist=diff_hist_z,
+                 x_edges=diff_edges_x, y_edges=diff_edges_y, z_edges=diff_edges_z)
+
+    # And extra sample histograms
+    np.savez('%s_BAT_model_extra_samples.npz'%args.save_prefix, **extra_sample_hists, **extra_sample_edges)
 
 
 if __name__ == "__main__":
     if sys.argv[1] == 'bat_stats':
         compute_bat_stats(sys.argv[2:])
+    elif sys.argv[1] == 'analyze_model':
+        analyze_model(sys.argv[2:])
     else:
-        print("Argument \'%s\' unrecognized. For the first argument, select \'bat_stats\' or nothing.")
+        print("Argument \'%s\' unrecognized. For the first argument, select \'bat_stats\' or \'analyze_model\'.")
