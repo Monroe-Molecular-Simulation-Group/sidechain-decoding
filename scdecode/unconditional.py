@@ -63,7 +63,10 @@ def inputs_from_pdb(pdb_file,
     # For N-terminal residues, know what want for bat_atom_str
     # To save us from having to set that, just set it if prep_n_terminal is True
     if prep_n_terminal:
-        bat_atom_str = '@N,CA,C,H,H1,H2,H3' # In forcefield xml file, N-terminal have H1, H2, H3, but Parmed uses H, H2, H3
+        # In forcefield xml file, N-terminal have H1, H2, H3, but Parmed uses H, H2, H3
+        # In general naming is not consistent - won't matter for forcefield b/c all will have same type
+        # But need more inclusive strings for these types of situations
+        bat_atom_str = '@N,CA,C,H,H1,H2,H3' 
 
     # Get pdb id from file
     pdb_id = os.path.split(pdb_file)[-1].split('.pdb')[0]
