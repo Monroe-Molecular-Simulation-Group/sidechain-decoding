@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=train
 #SBATCH --output=%x_%a.out
-#SBATCH --partition gpu72
+#SBATCH --partition agpu72
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=32
+#SBATCH --ntasks-per-node=64
 #SBATCH --time=72:00:00
 #SBATCH --array=0-25
 
@@ -17,7 +17,7 @@ module load mkl/19.0.5
 module load python/3.12-anaconda
 conda activate new_tf_protein_env
 
-datadir="/storage/jm217/data_Sidechain_Decoding/training_inputs"
+datadir="/storage/jm217/data_Sidechain_Decoding/energy_min_training_inputs"
 resnames=("ALA" "ARG" "ASH" "ASN" "ASP" "CYM" "CYS" "GLH" "GLN" "GLU" "HID" "HIE" "HIP" "HYP" "ILE" "LEU" "LYN" "LYS" "MET" "PHE" "PRO" "SER" "THR" "TRP" "TYR" "VAL")
 
 export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:$LD_LIBRARY_PATH
