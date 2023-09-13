@@ -136,8 +136,8 @@ def build_model(n_atoms, hidden_dim=100):
     # Note setting normal distributions to a std of 0.5 rather than 1
     # This is just so that effectively all of the latent distribution fits inside [-np.pi, np.pi]
     latent_dist = tfp.layers.DistributionLambda(make_distribution_fn=lambda t: tfp.distributions.Blockwise(
-                   [tfp.distributions.Normal(loc=tf.cast(0.0, tf.float32), scale=tf.cast(0.5, tf.float32))] * (2 * n_atoms)
-                    + [tfp.distributions.VonMises(loc=tf.cast(0.0, tf.float32), concentration=tf.cast(1.0, tf.float32))] * n_atoms)
+                [tfp.distributions.Normal(loc=tf.zeros((tf.shape(t)[0],)), scale=0.5*tf.ones((tf.shape(t)[0],)))] * (2 * n_atoms)
+                + [tfp.distributions.VonMises(loc=tf.zeros((tf.shape(t)[0],)), concentration=tf.ones((tf.shape(t)[0],)))] * n_atoms)
                                                ) # Bonds and angles modeled as normal distributions, torsions as von Mises
     flow = vaemolsim.flows.RQSSplineMAF(num_blocks=3, # Three RQS flows, middle with "random" ordering
                                         order_seed=42, # Setting seed makes order deterministic (so can load weights)

@@ -205,10 +205,13 @@ def check_cg(xyz_coords, bat_obj):
     Calculates the coarse-grained site position given Cartesian coordinates of the BAT atoms.
     """
     working_ag = bat_obj.atoms.convert_to('PARMED')
-    working_ag.coordinates = xyz_coords
-    sc_ag = working_ag['!(%s)'%data_io.backbone_atoms]
-    masses = np.array([a.mass for a in sc_ag])
-    return pmd.geometry.center_of_mass(sc_ag.coordinates, masses)
+    coms = []
+    for xyz in xyz_coords:
+        working_ag.coordinates = xyz
+        sc_ag = working_ag['!(%s)'%data_io.backbone_atoms]
+        masses = np.array([a.mass for a in sc_ag])
+        coms.append(pmd.geometry.center_of_mass(sc_ag.coordinates, masses))
+    return np.array(coms)
 
 
 def check_cg_from_bat(bat_coords, bat_obj):
@@ -247,7 +250,7 @@ def analyze_model(arg_list):
     full_bat = np.vstack([np.load(f) for f in full_bat_files]).astype('float32')
 
     # Save BAT data as reference distribution
-    ref_hists, ref_edges = build_bat_histograms(full_bat)
+    ref_hists, ref_edges = build_bat_histograms(full_bat[:, 9:])
     np.savez('%s_BAT_data.npz'%args.save_prefix, **ref_hists, **ref_edges)
 
     # Next identify training files and load dataset without batching
@@ -291,11 +294,7 @@ def analyze_model(arg_list):
     # NEED TO FIGURE OUT PREDICT WITH DIFFERENT DISTRIBUTIONS
     # For just a flow with a static distribution, need to create static to match batch_size (within the make_distribution_fn)
     # Then for others, should get batch size right, but be careful when sampling one distribution extra times
-    print(build_data.shape)
-    print(model(build_data))
-    print(model.predict(next(iter(dset))))
     samples = model.predict(dset, verbose=2)
-    print(samples.shape, full_bat.shape)
 
     # Produce and save distributions of BAT samples
     m_hists, m_edges = build_bat_histograms(samples)
@@ -315,18 +314,24 @@ def analyze_model(arg_list):
     # Want to select 10 random training examples to produce MANY samples from
     # Do by selecting indices
     rng = np.random.default_rng(seed=args.rng_seed)
-    extra_batch_inds = [rng.choice(full_bat.shape[0] // batch_size, size=10, replace=False)]
-    print('Batches with indices will be sampled extra: %s'%str(extra_sample_inds))
-    extra_sample_inds = [rng.choice(batch_size, size=10, replace=False)]
+    extra_batch_inds = rng.choice(full_bat.shape[0] // batch_size, size=10, replace=False).tolist()
+    print('Batches with indices will be sampled extra: %s'%str(extra_batch_inds))
+    extra_sample_inds = rng.choice(batch_size, size=10, replace=False).tolist()
+    if full_bat.shape[0] - 1 in extra_batch_inds:
+        extra_sample_inds[extra_batch_inds.index(full_bat.shape[0] - 1)] = rng.choice(full_bat.shape[0] % batch_size, replace=False)
     print('Within those batches, samples with indices will be sampled extra: %s'%str(extra_sample_inds))
 
     # Then looping over dataset and only stopping on selected indices
     extra_sample_hists = {}
     extra_sample_edges = {}
+    extra_sample_count = 1
     for i, (inputs, target) in enumerate(dset):
         if i in extra_batch_inds:
             this_sample_ind = extra_sample_inds[extra_batch_inds.index(i)]
-            this_input = (d[this_sample_ind, ...] for d in inputs)
+            if args.unconditional:
+                this_input = tf.gather(inputs, [this_sample_ind,], axis=0)
+            else:
+                this_input = [tf.gather(d, [this_sample_ind,], axis=0) for d in inputs]
             dist = model(this_input)
             extra_samples = np.squeeze(dist.sample(10000))
             this_hist, this_edges = build_bat_histograms(extra_samples)
