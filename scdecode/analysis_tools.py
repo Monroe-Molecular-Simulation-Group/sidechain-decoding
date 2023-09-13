@@ -238,6 +238,8 @@ def analyze_model(arg_list):
     if args.save_prefix is None:
         args.save_prefix = args.res_type
 
+    batch_size = 64
+
     # Start by identifying files with full BAT distributions and read in
     full_bat_files = glob.glob('%s/*.npy'%args.read_dir)
     full_bat_files.sort()
@@ -248,18 +250,20 @@ def analyze_model(arg_list):
     ref_hists, ref_edges = build_bat_histograms(full_bat)
     np.savez('%s_BAT_data.npz'%args.save_prefix, **ref_hists, **ref_edges)
 
-    # Next identify training files and load dataset without any batching
+    # Next identify training files and load dataset without batching
     if args.unconditional:
-        # Unless working unconditional stuff...
+        # Unless working with unconditional stuff...
         # Then dset is just the full_bat stuff
-        dset = tf.data.Dataset.from_tensor_slices((full_bat, full_bat))
+        dset = tf.data.Dataset.from_tensor_slices((full_bat, full_bat)).batch(batch_size)
     else:
         train_files = glob.glob('%s/*.tfrecord'%args.read_dir)
         train_files.sort()
         train_files = train_files
         dset = data_io.read_dataset(train_files)
-        # Well, actually still need to ragged batch with batchsize of 1
-        dset = dset.ragged_batch(1)
+        # Want CG coordinates for comparison
+        cg_only_dset = dset.map(lambda x, y : x[0]).batch(1000)
+        cg_refs = np.vstack([cg for cg in cg_only_dset])
+        dset = dset.ragged_batch(batch_size)
 
     # Load the BAT analysis object
     bat_obj_file = glob.glob('%s/*.pkl'%args.read_dir)[0]
@@ -277,60 +281,62 @@ def analyze_model(arg_list):
     model.compile(tf.keras.optimizers.Adam(),
                   loss=vaemolsim.losses.LogProbLoss(),
                  )
-    _ = model(next(iter(dset))[0])
+    build_data = next(iter(dset))[0]
+    _ = model(build_data)
     model.load_weights(args.model_ckpt).expect_partial()
+
+    # Predict for full dataset
+    # Note will need custom predict_step so that draw samples
+    # tfp.distribution objects are not tensors, so will break default predict
+    # NEED TO FIGURE OUT PREDICT WITH DIFFERENT DISTRIBUTIONS
+    # For just a flow with a static distribution, need to create static to match batch_size (within the make_distribution_fn)
+    # Then for others, should get batch size right, but be careful when sampling one distribution extra times
+    print(build_data.shape)
+    print(model(build_data))
+    print(model.predict(next(iter(dset))))
+    samples = model.predict(dset, verbose=2)
+    print(samples.shape, full_bat.shape)
+
+    # Produce and save distributions of BAT samples
+    m_hists, m_edges = build_bat_histograms(samples)
+    np.savez('%s_BAT_model.npz'%args.save_prefix, **m_hists, **m_edges)
+
+    if not args.unconditional:
+        # Get CG bead positions of predictions and compare to references
+        cg_pos = check_cg_from_bat(np.hstack([full_bat[:, :9], samples]), bat_obj)
+        cg_diffs = cg_pos - cg_refs
+        diff_hist_x, diff_edges_x = np.histogram(cg_diffs[:, 0], bins='auto')
+        diff_hist_y, diff_edges_y = np.histogram(cg_diffs[:, 1], bins='auto')
+        diff_hist_z, diff_edges_z = np.histogram(cg_diffs[:, 2], bins='auto')
+        np.savez('%s_CG_diffs.npz'%args.save_prefix,
+                 x_hist=diff_hist_x, y_hist=diff_hist_y, z_hist=diff_hist_z,
+                 x_edges=diff_edges_x, y_edges=diff_edges_y, z_edges=diff_edges_z)
 
     # Want to select 10 random training examples to produce MANY samples from
     # Do by selecting indices
     rng = np.random.default_rng(seed=args.rng_seed)
-    extra_sample_inds = rng.choice(full_bat.shape[0], size=10, replace=False)
-    print('Training examples at the following indices will be sampled extra: %s'%str(extra_sample_inds))
+    extra_batch_inds = [rng.choice(full_bat.shape[0] // batch_size, size=10, replace=False)]
+    print('Batches with indices will be sampled extra: %s'%str(extra_sample_inds))
+    extra_sample_inds = [rng.choice(batch_size, size=10, replace=False)]
+    print('Within those batches, samples with indices will be sampled extra: %s'%str(extra_sample_inds))
 
-    # Loop over dataset and decode
-    # Not very efficient, because not batching
-    # But simpler because will match up easier with full_bat data
-    all_samples = []
-    all_cg_diffs = []
-    extra_sample_count = 1
+    # Then looping over dataset and only stopping on selected indices
     extra_sample_hists = {}
     extra_sample_edges = {}
     for i, (inputs, target) in enumerate(dset):
-        # Get decoding distribution and sample from it
-        dist = model(inputs)
-        sample = dist.sample().numpy()
-        all_samples.append(sample)
-
-        # From this sample, obtain CG bead location and get distance from reference
-        if not args.unconditional:
-            cg_pos = check_cg_from_bat(np.hstack([full_bat[[i,], :9], sample]), bat_obj)
-            all_cg_diffs.append(cg_pos - inputs[0].numpy())
-
-        if i in extra_sample_inds:
-            # Sample extra samples
+        if i in extra_batch_inds:
+            this_sample_ind = extra_sample_inds[extra_batch_inds.index(i)]
+            this_input = (d[this_sample_ind, ...] for d in inputs)
+            dist = model(this_input)
             extra_samples = np.squeeze(dist.sample(10000))
             this_hist, this_edges = build_bat_histograms(extra_samples)
             # Once have histograms, label uniquely with keys
             for k in this_hist.keys():
                 extra_sample_hists['example%i_%s'%(extra_sample_count, k)] = this_hist[k]
                 extra_sample_edges['example%i_%s_edges'%(extra_sample_count, k)] = this_edges[k+'_edges']
-            extra_sample_count += 1 
+            extra_sample_count += 1
 
-    # Produce and save distributions of BAT samples
-    all_samples = np.vstack(all_samples)
-    m_hists, m_edges = build_bat_histograms(all_samples)
-    np.savez('%s_BAT_model.npz'%args.save_prefix, **m_hists, **m_edges)
-
-    # And differences from CG reference (if unconditional and can compute)
-    if len(all_cg_diffs) != 0:
-        all_cg_diffs = np.vstack(all_cg_diffs)
-        diff_hist_x, diff_edges_x = np.histogram(all_cg_diffs[:, 0], bins='auto')
-        diff_hist_y, diff_edges_y = np.histogram(all_cg_diffs[:, 1], bins='auto')
-        diff_hist_z, diff_edges_z = np.histogram(all_cg_diffs[:, 2], bins='auto')
-        np.savez('%s_CG_diffs.npz'%args.save_prefix,
-                 x_hist=diff_hist_x, y_hist=diff_hist_y, z_hist=diff_hist_z,
-                 x_edges=diff_edges_x, y_edges=diff_edges_y, z_edges=diff_edges_z)
-
-    # And extra sample histograms
+    # And save extra sample histograms
     np.savez('%s_BAT_model_extra_samples.npz'%args.save_prefix, **extra_sample_hists, **extra_sample_edges)
 
 
