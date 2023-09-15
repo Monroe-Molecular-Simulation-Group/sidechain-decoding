@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=analysis
 #SBATCH --output=%x_%a.out
-#SBATCH --partition gpu72
+#SBATCH --partition agpu72
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=32
+#SBATCH --ntasks-per-node=64
 #SBATCH --time=72:00:00
 #SBATCH --array=0-25
 
