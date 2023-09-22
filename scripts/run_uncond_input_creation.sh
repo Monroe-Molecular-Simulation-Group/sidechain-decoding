@@ -2,8 +2,8 @@
 
 # conda activate tf_protein_env
 
-datadir="${HOME}/Sidechain_Decoding/clean_pdbs"
-savedir="${HOME}/Sidechain_Decoding/training_inputs"
+datadir="${HOME}/Sidechain_Decoding/energy_min_pdbs"
+savedir="${HOME}/Sidechain_Decoding/energy_min_training_inputs"
 
 # Training special case residues - GLY, N-terminal hydrogens, and NPRO
 # All will be trained without conditioning on local environment

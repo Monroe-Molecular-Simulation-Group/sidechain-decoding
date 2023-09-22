@@ -2,8 +2,8 @@
 
 # conda activate tf_protein_env
 
-datadir="${HOME}/Sidechain_Decoding/training_inputs"
-modeldir="${HOME}/Sidechain_Decoding/trained_models"
+datadir="${HOME}/Sidechain_Decoding/energy_min_training_inputs"
+modeldir="${HOME}/Sidechain_Decoding/energy_min_trained_models"
 
 # Analyzing special case residues - GLY, N-terminal hydrogens, and NPRO
 
