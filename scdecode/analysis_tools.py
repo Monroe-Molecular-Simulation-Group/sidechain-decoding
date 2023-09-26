@@ -8,6 +8,9 @@ import pickle
 import numpy as np
 import tensorflow as tf
 
+from scipy import stats as spstats
+import matplotlib.pyplot as plt
+
 import openmm as mm
 import parmed as pmd
 
@@ -345,10 +348,200 @@ def analyze_model(arg_list):
     np.savez('%s_BAT_model_extra_samples.npz'%args.save_prefix, **extra_sample_hists, **extra_sample_edges)
 
 
+# Define functions to help with sorting when plotting
+def get_num(s):
+    return int(s.split('_')[-1])
+
+
+def sort_BAT_keys(keys):
+    new_list = []
+    for lab in ['bond', 'angle', 'dihedral']:
+        this_list = [k for k in keys if lab in k]
+        this_list.sort(key=get_num)
+        new_list.extend(this_list)
+    return new_list
+
+
+# And for normalizing histograms
+def norm_hist(hist, edges):
+    new_hist = hist / np.sum(hist)
+    new_hist /= (edges[1:] - edges[:-1])
+    return new_hist
+
+
+def plot_history(hist_list, labels=None):
+    if labels is None:
+        if len(hist_list) > 1:
+            labels = ['Model %i '%(i+1) for i in range(len(hist_list))]
+        else:
+            labels = ['',]
+
+    fig, ax = plt.subplots()
+
+    for i, history in enumerate(hist_list):
+        epochs = 1 + np.arange(history['loss'].shape[0])
+        ax.plot(epochs, history['loss'], label=labels[i]+'Training Loss')
+        ax.plot(epochs, history['val_loss'], label=labels[i]+'Validation Loss')
+
+    ax.set_xlabel('Training Epochs')
+    ax.set_ylabel('Loss')
+
+    ax.legend()
+
+    fig.tight_layout()
+    return fig
+
+
+def plot_dofs(ref_dat, pred_dat, labels=None, extra_samples=False):
+    if len(ref_dat) != len(pred_dat):
+        raise ValueError("Lengths of data lists must match!")
+
+    if labels is None:
+        if len(ref_dat) > 1:
+            labels = ['Dataset %i '%(i+1) for i in range(len(ref_dat))]
+        else:
+            labels = ['',]
+
+    keys = [k for k in ref_dat[0].keys() if 'edges' not in k]
+    keys = sort_BAT_keys(keys)
+
+    n_col = 5
+    n_row = int(np.ceil(len(keys) / n_col))
+    
+    fig, ax = plt.subplots(n_row, n_col, figsize=(n_col*3.0, n_row*2.5))
+
+    ref_colors = ['gray', 'black']
+    
+    for a, key in zip(ax.flatten()[:len(keys)], keys):
+
+        for i in range(len(ref_dat)):
+            
+            if extra_samples:
+                for j in range(1, 11):
+                    hist = pred_dat[i]['example%i_%s'%(j, key)]
+                    edges = pred_dat[i]['example%i_%s_edges'%(j, key)]
+                    a.stairs(norm_hist(hist, edges),
+                             edges=edges,
+                             label=labels[i]+'Config %i'%j,
+                            ) 
+            else:
+                a.stairs(norm_hist(pred_dat[i][key], pred_dat[i]['%s_edges'%key]),
+                         edges=pred_dat[i]['%s_edges'%key],
+                         label=labels[i]+'Model',
+                        )
+            a.stairs(norm_hist(ref_dat[i][key], ref_dat[i]['%s_edges'%key]),
+                     edges=ref_dat[i]['%s_edges'%key],
+                     label=labels[i]+'Ref',
+                     color=ref_colors[i],
+                     linestyle='--',
+                    )
+       
+        a.annotate(key, xy=(0.05, 0.90), xycoords='axes fraction')
+    
+    ax[0, 0].legend(loc='lower left')
+    
+    fig.tight_layout()
+    return fig
+
+
+def plot_cg_diffs(cg_dat):
+
+    fig, ax = plt.subplots(3, 2)
+     
+    for i, dim in enumerate(['x', 'y', 'z']):
+        hist = cg_dat['%s_hist'%dim]
+        edges = cg_dat['%s_edges'%dim]
+        ax[i, 0].stairs(norm_hist(hist, edges), edges=edges)
+    
+        # Check if can fit to Gaussian
+        centers = 0.5*(edges[1:] + edges[:-1])
+        mean = np.sum((hist / np.sum(hist)) * centers)
+        std = np.sqrt(np.sum((hist / np.sum(hist)) * (centers - mean)**2))
+        ax[i, 0].plot(centers, spstats.norm.pdf(centers, mean, std), 'k--')
+    
+        # Seems like a Cauchy distribution fits much better, though hard to determine best-fit parameters
+        cum_dist = np.cumsum(hist / np.sum(hist))
+        median = centers[np.argmin(np.abs(cum_dist - 0.5))]
+        mad = np.sum((hist / np.sum(hist)) * np.abs(centers - median))
+        ax[i, 0].plot(centers, spstats.cauchy.pdf(centers, median, mad), 'c--')
+    
+        # Or a Laplace distribution? This is probably the best fit
+        ax[i, 0].plot(centers, spstats.laplace.pdf(centers, mean, std/np.sqrt(2)), 'r--')
+   
+        # And plot cummulative distributions, too
+        ax[i, 1].plot(centers, cum_dist)
+        ax[i, 1].plot(centers, spstats.norm.cdf(centers, mean, std), 'k--')
+        ax[i, 1].plot(centers, spstats.cauchy.cdf(centers, median, mad), 'c--')
+        ax[i, 1].plot(centers, spstats.laplace.cdf(centers, mean, std/np.sqrt(2)), 'r--')
+    
+    fig.tight_layout()
+    return fig
+
+
+def plot_analysis(arg_list):
+    """
+    Plots results of analyze_model.
+    """
+    parser = argparse.ArgumentParser(prog='analysis_tools.plot_analysis',
+                                     description='Generates plots of analysis results.',
+                                    )
+    parser.add_argument('res_type', help='residue type to work with')
+    parser.add_argument('--read_dirs', '-r', default=['./',], nargs='*', help='directories to read files from')
+    parser.add_argument('--model_dirs', '-m', default=['./',], nargs='*', help='directories where models and training histories found')
+    parser.add_argument('--save_dir', '-s', default='./', help='directory to save figures to')
+    parser.add_argument('--labels', '-l', default=None, nargs='*', help='labels for data from directories read')
+
+    args = parser.parse_args(arg_list)
+
+    if args.labels is None:
+        if len(args.read_dirs) == 1:
+            labels = ['',]
+        else:
+            labels = ['', 'E-Min ']
+    else:
+        labels = args.labels[:len(args.read_dirs)]
+    
+    # Start by plotting training history
+    history_list = [np.load('%s/%s_history.npz'%(d, args.res_type)) for d in args.model_dirs]
+    hist_fig = plot_history(history_list, labels=labels)
+    hist_fig.savefig('%s/%s_train_history.png'%(args.save_dir, args.res_type))
+
+    # Next look at decoded distributions compared to reference
+    ref_dat = [np.load('%s/%s_BAT_data.npz'%(d, args.res_type)) for d in args.read_dirs]
+    pred_dat = [np.load('%s/%s_BAT_model.npz'%(d, args.res_type)) for d in args.read_dirs]
+
+    # Start with plot of single prediction for every sample compared to reference
+    dofs_fig = plot_dofs(ref_dat, pred_dat, labels=labels)
+    dofs_fig.savefig('%s/%s_DOFs.png'%(args.save_dir, args.res_type))
+
+    # Plots of the reference compared to 10 static configurations with many draws
+    # Plot for each dataset
+    # Only do this if can load data (some residues with small amounts of data may not have generated)
+    try:
+        extra_dat = [np.load('%s/%s_BAT_model_extra_samples.npz'%(d, args.res_type)) for d in args.read_dirs]
+        for i in range(len(args.read_dirs)):
+            extra_dofs_fig = plot_dofs([ref_dat[i]], [extra_dat[i]], extra_samples=True)
+            extra_dofs_fig.savefig('%s/%s_extra_sample_DOFs_%s.png'%(args.save_dir, args.res_type, labels[i].strip()))
+    except FileNotFoundError:
+        print("Skipping single config distribution analysis for residue %s because could not find 'extra_sample' files."%args.res_type)
+
+    # Examine differences of decoded structure from original CG bead location
+    # May fail if CG bead location not defined or irrelevant
+    try:
+        cg_dat = [np.load('%s/%s_CG_diffs.npz'%(d, args.res_type)) for d in args.read_dirs]
+        for i in range(len(cg_dat)):
+            cg_fig = plot_cg_diffs(cg_dat[i])
+            cg_fig.savefig('%s/%s_CG_diffs_%s.png'%(args.save_dir, args.res_type, labels[i].strip()))
+    except FileNotFoundError:
+        print("Skipping CG bead difference analysis for residue %s because could not find 'CG_diffs' files."%args.res_type)
+
+
 if __name__ == "__main__":
     if sys.argv[1] == 'bat_stats':
         compute_bat_stats(sys.argv[2:])
     elif sys.argv[1] == 'analyze_model':
         analyze_model(sys.argv[2:])
+    elif sys.argv[1] == 'plot_analysis':
+        plot_analysis(sys.argv[2:])
     else:
         print("Argument \'%s\' unrecognized. For the first argument, select \'bat_stats\' or \'analyze_model\'.")
