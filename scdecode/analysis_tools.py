@@ -170,8 +170,9 @@ def fill_in_bat(partial_bat, root_pos):
     """
     if len(root_pos.shape) == 2:
         root_pos = np.expand_dims(root_pos, 0)
+        do_squeeze = True
     elif len(root_pos.shape) == 3:
-        pass
+        do_squeeze = False
     else:
         raise ValueError('Positions of root atoms must be N_batchx3x3 or 3x3 (if have no batch dimension).')
 
@@ -199,8 +200,11 @@ def fill_in_bat(partial_bat, root_pos):
     omega = np.arctan2(pos2[:, 1], pos2[:, 0])
     full_bat = np.hstack([p0, azimuthal[:, None], polar[:, None], omega[:, None],
                           r01[:, None], r12[:, None], a012[:, None], partial_bat])
-    
-    return np.squeeze(full_bat)
+  
+    if do_squeeze:
+        return np.squeeze(full_bat)
+    else:
+        return full_bat
 
 
 def check_cg(xyz_coords, bat_obj):
@@ -223,6 +227,21 @@ def check_cg_from_bat(bat_coords, bat_obj):
     """
     xyz_coords = xyz_from_bat(bat_coords, bat_obj)
     return check_cg(xyz_coords, bat_obj)
+
+
+def map_to_cg_configs(mda_uni):
+    """
+    Given an MDAnalysis universe, maps the trajectory to a CG trajectory.
+    """
+    # Define atom groups
+    atom_cg = mda_uni.select_atoms('name %s'%data_io.cg_atoms[1:].replace(',', ' or name '))
+    atom_sc = mda_uni.select_atoms('not (name %s)'%data_io.backbone_atoms[1:].replace(',', ' or name '))
+
+    cg_traj = []
+    for frame in mda_uni.trajectory:
+        cg_traj.append(np.vstack([atom_cg.positions, atom_sc.center_of_mass(compound='residues')]))
+    
+    return np.array(cg_traj)
 
 
 def analyze_model(arg_list):
