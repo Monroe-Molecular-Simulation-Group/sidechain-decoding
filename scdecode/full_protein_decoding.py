@@ -125,7 +125,7 @@ class ProteinDecoder(object):
     Class for decoding a protein.
     """
 
-    def __init__(self, pdb_file, bat_dir='./', model_dir='./'):
+    def __init__(self, pdb_file, bat_dir='./', model_dir='./', bat_dict=None, model_dict=None):
         """
         Given a cleaned up PDB file, creates a class instance.
         """
@@ -138,7 +138,6 @@ class ProteinDecoder(object):
         templates_for_residues = data_io.ff._matchAllResiduesToTemplates(ff_data, mm_pdb.topology, dict(), False)
         res_types = [templates_for_residues[r.index].name for r in mm_pdb.topology.residues()]
         self.sequence = res_types
-        print(self.sequence)
 
         # Helpful to have ParmEd structure object for understanding topology and atom indices
         self.pmd_struc = pmd.openmm.load_topology(mm_pdb.topology, xyz=mm_pdb.positions)
@@ -146,7 +145,6 @@ class ProteinDecoder(object):
         # Can generate one-hot encodings for CG configuration now
         # Consists of all atoms preserved in CG config plus sidechain beads
         cg_only = self.pmd_struc.view[data_io.cg_atoms]
-        print(cg_only)
         cg_inds = [a.idx for a in cg_only.atoms]
         self.cg_inds = cg_inds # Will be helpful for stitching configurations back together
         atom_types = np.array([ff_data.atomType[a] for a in mm_pdb.topology.atoms()])
@@ -157,10 +155,15 @@ class ProteinDecoder(object):
 
         # Get unique residue list for loading appropriate BAT objects and models
         unique_res = get_unique_res(res_types)
-        print(unique_res)
-        # Load dictionaries of BAT objects and decoding models
-        self.bat_dict = gather_bat_objects(unique_res, search_dir=bat_dir)
-        self.model_dict = gather_models(unique_res, self.bat_dict, model_dir=model_dir)
+        # Load dictionaries of BAT objects and decoding models, if not already provided
+        if bat_dict is None:
+            self.bat_dict = gather_bat_objects(unique_res, search_dir=bat_dir)
+        else:
+            self.bat_dict = bat_dict
+        if model_dict is None:
+            self.model_dict = gather_models(unique_res, self.bat_dict, model_dir=model_dir)
+        else:
+            self.model_dict = model_dict
 
         # Will need structure of only CG atoms (for getting those indices specifically, etc.)
         cg_struc = self.pmd_struc[data_io.cg_atoms] # Positions of only CG atoms (without sidechain beads)
@@ -184,10 +187,8 @@ class ProteinDecoder(object):
         # And adjust self.cg_inds
         self.cg_inds = np.delete(self.cg_inds, remove_Nterm_H_inds)
         # Finally, get rid of those atoms in cg_struc as well
-        print(remove_Nterm_H_inds)
         exclude_str = '!(@' + ','.join(['%i'%(ind + 1) for ind in remove_Nterm_H_inds]) + ')'
         cg_struc = cg_struc[exclude_str]
-        print(cg_struc)
 
         # To save time, it will also be nice to have all of the atom indices necessary for
         # recreating XYZ coords from BAT

@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 
 import openmm as mm
 import parmed as pmd
+import MDAnalysis as mda
 
 import vaemolsim
 
@@ -242,6 +243,43 @@ def map_to_cg_configs(mda_uni):
         cg_traj.append(np.vstack([atom_cg.positions, atom_sc.center_of_mass(compound='residues')]))
     
     return np.array(cg_traj)
+
+
+def create_cg_structure(pmd_struc, mda_uni=None):
+    """
+    Given a ParmEd protein structure, generates a CG ParmEd structure.
+ 
+    The CG atoms (mostly backbone) will be present, along with CG sidechain beads.
+    """
+    # Get positions of atoms and beads in CG configuration
+    if mda_uni is None:
+        cg_pos = map_to_cg_configs(mda.Universe(pmd_struc))
+    else:
+        cg_pos = map_to_cg_configs(mda_uni)
+ 
+    # Get atoms present in CG structure
+    cg_struc = pmd_struc[data_io.cg_atoms]
+ 
+    # Loop over residues and create residue and atom lists
+    res_list = pmd.ResidueList()
+    atom_list = pmd.AtomList()
+    for i, res in enumerate(pmd_struc.residues):
+        res_list.add_atom(pmd.Atom(name='CG', type=res.name), 'SC%s'%res.name, i + 1, 'A')
+        atom_list.append(res_list[i].atoms[0])
+
+    # Create just sidechain bead structure
+    sc_beads = pmd.Structure()
+    sc_beads.residues = res_list
+    sc_beads.atoms = atom_list
+    sc_beads.coordinates = cg_pos[0, -len(pmd_struc.residues):, :]
+    
+    # Combine CG atoms and CG sidechain beads
+    combined_struc = cg_struc + sc_beads
+
+    # Set all coordinates from trajectory if have them
+    combined_struc.coordinates = cg_pos
+
+    return combined_struc
 
 
 def analyze_model(arg_list):
