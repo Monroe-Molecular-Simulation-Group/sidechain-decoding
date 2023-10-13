@@ -17,7 +17,7 @@ import MDAnalysis as mda
 
 import vaemolsim
 
-from . import data_io, model_training, unconditional
+from . import data_io, coord_transforms, model_training, unconditional
 
 
 def build_bat_histograms(all_bat):
@@ -128,86 +128,6 @@ def pdb_energy_decomp(pdb_file):
     return pmd.openmm.energy_decomposition_system(struc, sim.system, nrg=mm.unit.kilojoules_per_mole)
 
 
-def xyz_from_bat(bat_coords, bat_obj):
-    """
-    Loops over many BAT coordinates to convert back to Cartesian.
-
-    Parameters
-    ----------
-    bat_coords : NumPy array
-        The full set of BAT coordinates for a specific residue/sidechain.
-    bat_obj : MDAnalysis BAT analysis object
-        The BAT analysis object that can convert between BAT and Cartesian.
-
-    Returns
-    -------
-    xyz_coords : NumPy array
-        The Cartesian coordinates of the residue/sidechain.
-    """
-    xyz_coords = []
-    for bc in bat_coords:
-        xyz_coords.append(bat_obj.Cartesian(bc))
-    return np.array(xyz_coords)
-
-
-def fill_in_bat(partial_bat, root_pos):
-    """
-    Recreates a full set of BAT coordinates from a partial set and the root atom positions.
-
-    Parameters
-    ----------
-    partial_bat : NumPy array
-        The partial set of BAT coordinates, not including the root atom (first 3) coordinates.
-    root_pos : NumPy array
-        A N_frames by 3 by 3 array of the positions of the root atoms. For most residues,
-        this will be C, CA, and CB, but may be different for something like GLY.
-
-    Returns
-    -------
-    full_bat : NumPy array
-        The full set of BAT coordinates, including information on the CA and CB atom
-        locations, which is needed for converting back to XYZ coordinates for all
-        atoms in a sidechain.
-    """
-    if len(root_pos.shape) == 2:
-        root_pos = np.expand_dims(root_pos, 0)
-        do_squeeze = True
-    elif len(root_pos.shape) == 3:
-        do_squeeze = False
-    else:
-        raise ValueError('Positions of root atoms must be N_batchx3x3 or 3x3 (if have no batch dimension).')
-
-    if len(partial_bat.shape) == 1:
-        partial_bat = np.expand_dims(partial_bat, 0)
-
-    n_batch = root_pos.shape[0]
-    p0 = root_pos[:, 0, :]
-    p1 = root_pos[:, 1, :]
-    p2 = root_pos[:, 2, :]
-    v01 = p1 - p0
-    v21 = p1 - p2
-    r01 = np.sqrt(np.sum(v01 * v01, axis=-1))
-    r12 = np.sqrt(np.sum(v21 * v21, axis=-1))
-    a012 = np.arccos(np.sum(v01 * v21, axis=-1) / (r01 * r12))
-    polar = np.arccos(v01[:, 2] / r01)
-    azimuthal = np.arctan2(v01[:, 1], v01[:, 0])
-    cp = np.cos(azimuthal)
-    sp = np.sin(azimuthal)
-    ct = np.cos(polar)
-    st = np.sin(polar)
-    Rz = np.array([[cp * ct, ct * sp, -st], [-sp, cp, np.zeros(n_batch)], [cp * st, sp * st, ct]])
-    Rz = np.transpose(Rz, axes=(2, 0, 1))
-    pos2 = np.squeeze(Rz @ np.expand_dims(p2 - p1, -1), axis=-1)
-    omega = np.arctan2(pos2[:, 1], pos2[:, 0])
-    full_bat = np.hstack([p0, azimuthal[:, None], polar[:, None], omega[:, None],
-                          r01[:, None], r12[:, None], a012[:, None], partial_bat])
-  
-    if do_squeeze:
-        return np.squeeze(full_bat)
-    else:
-        return full_bat
-
-
 def check_cg(xyz_coords, bat_obj):
     """
     Calculates the coarse-grained site position given Cartesian coordinates of the BAT atoms.
@@ -226,7 +146,7 @@ def check_cg_from_bat(bat_coords, bat_obj):
     """
     Calculates the coarse-grained site position from BAT coordinates.
     """
-    xyz_coords = xyz_from_bat(bat_coords, bat_obj)
+    xyz_coords = coord_transforms.xyz_from_bat_numpy(bat_coords, bat_obj)
     return check_cg(xyz_coords, bat_obj)
 
 
