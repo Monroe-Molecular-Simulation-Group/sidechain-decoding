@@ -80,13 +80,15 @@ def compute_bat_stats(arg_list):
 # To see which residues having trouble, or if atomic overlaps, helps to have forces
 # Have optional flag to return
 # That way, can visualize where have high energies/forces by coloring by force if want
-def config_energy(coords, sim_obj, compute_forces=False):
+def config_energy(coords, sim_obj, compute_forces=False, constrain_H_bonds=False):
     """
     Computes energy of a configuration given a simulation object.
     """
     if not isinstance(coords, mm.unit.Quantity):
         coords = coords * mm.unit.angstrom
     sim_obj.context.setPositions(coords)
+    if constrain_H_bonds:
+        sim_obj.context.applyConstraints()
     state = sim_obj.context.getState(getEnergy=True, getForces=compute_forces)
     if compute_forces:
         return (state.getPotentialEnergy().value_in_unit(mm.unit.kilojoules_per_mole),

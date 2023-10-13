@@ -10,7 +10,116 @@ import tensorflow_probability as tfp
 
 import vaemolsim
 
+from . import data_io
+
 from .data_io import read_dataset
+from .coord_transforms import bat_cartesian_tf
+
+
+# Need custom loss function to help enforce CG location
+class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
+    """
+    A loss to enforce mapping of output to CG coordinates in addition to log probability.
+    """
+
+    def __init__(self, bat_obj, cg_var=1.0, mask_H=False, name='log_prob_cg_loss', **kwargs):
+        """
+        Creates loss object.
+
+        Parameters
+        ----------
+        bat_obj : MDAnalysis BAT analysis object
+            BAT analysis object defining the transformation.
+        cg_var : float, default 1.0
+            Variance for distribution of CG coordinates from reference.
+        mask_H : bool, default False
+            Whether or not to define mask over bonds involving hydrogens.
+        """
+
+        super(LogProbPenalizedCGLoss, self).__init__(name=name, **kwargs)
+
+        self.bat_obj = bat_obj
+
+        self.cg_var = cg_var
+
+        n_bonds = len(bat_obj._torsions)
+        h_inds = []
+        non_h_inds = list(range(n_bonds*3))
+        if mask_H:
+            for i, a in bat_obj._ag1.atoms:
+                if a.name[0] == 'H'
+                    h_inds.append(i)
+                    non_h_inds.remove(i)
+        self.h_inds = h_inds
+        self.non_h_inds = non_h_inds
+
+        # Somehow need to look up bond lengths!
+        # Actually matters for CG site location calculation
+        # For now just make ones
+        self.h_bond_lengths = tf.ones(len(h_inds))
+
+        # Also need masses of atoms contributing to sidechain CG position
+        # That will include all but the first 2 root atoms and the HA atom
+        # (assuming that root atoms are C, CA, CB or N, CA, CB)
+        # Set masses of non-sidechain atoms to 0.0 so do not contribute
+        masses = []
+        for i, a in bat_obj._ag1.atoms:
+            if a.name not in data_io.backbone_atoms[1:].split(','):
+                masses.append(a.mass)
+            else:
+                masses.append(0.0)
+        mass_weights = np.array(masses) / np.sum(masses)
+        self.mass_weights = tf.reshape(tf.cast(mass_weights, tf.float32), (1, -1, 1))
+
+    def call(self, targets, decoder):
+        """
+        Computes the log-probability of samples under a provided tfp.distribution object.
+        And adds on a penalty for being far from the CG reference when sample from the distribution.
+
+        Parameters
+        ----------
+        targets : list of tf.Tensor
+            List of full BAT coordinates and CG reference coordinate
+        decoder : tfp.distributions object
+            An object representing model probability density (must have a log_prob() method).
+
+        Returns
+        -------
+        loss : tf.Tensor
+            Negative log-probability of samples under decoder, without taking average
+            over batch (i.e, it returns the per-sample loss). Adds this to penalization
+            of CG coordinate of sample from the reference.
+        """
+        # Define inputs
+        full_bat = targets[0]
+        cg_ref = targets[1]
+
+        # Need to pick apart full BAT to compute log-probability correctly
+        bat = tf.gather(full_bat[:, 9:], self.non_h_inds, axis=-1)
+        log_prob = -decoder.log_prob(bat)
+
+        # Now need to sample from the distribution and check CG positions
+        sample = decoder.sample()
+
+        # Insert H-bond values
+        h_bond_vals = tf.tile(tf.reshape(self.h_bond_lengths, (1, -1)), (tf.shape(sample)[0], 1))
+        full_sample = tf.transpose(tf.dynamic_stitch([self.non_h_inds, self.h_inds],
+                                                [tf.transpose(sample), tf.transpose(h_bond_vals)])
+                             )
+
+        # Combine predicted values with root positions in target
+        full_sample = tf.concat([full_bat[:, :9], full_sample], axis=-1)
+
+        # Obtain XYZ indices
+        xyz_sample = bat_cartesian_tf(full_sample, self.bat_obj)
+
+        # Compute location of CG reference site
+        cg_sample = tf.reduce_sum(self.mass_weights * xyz_sample, axis=1)
+        
+        # Assuming Gaussian distribution, enforce sampled CG close to reference
+        cg_penalty = tf.reduce_sum((cg_sample - cg_ref)**2 / (2.0 * self.cg_var), axis=-1)
+
+        return log_prob + cg_penalty
 
 
 def build_model(n_atoms, embed_dim=20, hidden_dim=100):
