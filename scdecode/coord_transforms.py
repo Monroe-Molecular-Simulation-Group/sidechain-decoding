@@ -28,8 +28,9 @@ def bat_cartesian_tf(bat_frame, bat_obj):
 
     #Want to be able to operate on multiple frames simultaneously
     #(like a batch), so add dimension if just one configuration
-    if len(bat_frame.shape) == 1:
-        bat_frame = tf.reshape(bat_frame, (1, -1))
+    # Actually, just make user do this
+    # if len(tf.shape(bat_frame)) == 1:
+    #     bat_frame = tf.reshape(bat_frame, (1, -1))
     n_batch = tf.shape(bat_frame)[0]
 
     # Split the bat vector into more convenient variables
@@ -53,7 +54,7 @@ def bat_cartesian_tf(bat_frame, bat_obj):
 
     # Set initial root atom positions based on internal coordinates
     p0 = tf.zeros((n_batch, 3))
-    p1 = tf.transpose(tf.scatter_nd([[2]], [tf.reshape(r01, (-1))], (3, n_batch)))
+    p1 = tf.transpose(tf.scatter_nd([[2]], [tf.reshape(r01, (-1,))], (3, n_batch)))
     p2 = tf.concat([r12 * tf.math.sin(a012),
                     tf.zeros((n_batch, 1)),
                     r01 - r12 * tf.math.cos(a012)], axis=1)

@@ -46,8 +46,8 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
         h_inds = []
         non_h_inds = list(range(n_bonds*3))
         if mask_H:
-            for i, a in bat_obj._ag1.atoms:
-                if a.name[0] == 'H'
+            for i, a in enumerate(bat_obj._ag1.atoms):
+                if a.name[0] == 'H':
                     h_inds.append(i)
                     non_h_inds.remove(i)
         self.h_inds = h_inds
@@ -63,7 +63,7 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
         # (assuming that root atoms are C, CA, CB or N, CA, CB)
         # Set masses of non-sidechain atoms to 0.0 so do not contribute
         masses = []
-        for i, a in bat_obj._ag1.atoms:
+        for a in bat_obj.atoms:
             if a.name not in data_io.backbone_atoms[1:].split(','):
                 masses.append(a.mass)
             else:
@@ -78,8 +78,9 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
 
         Parameters
         ----------
-        targets : list of tf.Tensor
-            List of full BAT coordinates and CG reference coordinate
+        targets : tf.Tensor
+            Tensor with shape (N_batch, N_BAT+3), with full BAT coordinates up to the last 3
+            columns, with those last 3 being the CG reference location.
         decoder : tfp.distributions object
             An object representing model probability density (must have a log_prob() method).
 
@@ -91,8 +92,9 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
             of CG coordinate of sample from the reference.
         """
         # Define inputs
-        full_bat = targets[0]
-        cg_ref = targets[1]
+        # List of inputs is more intuitive, but is not possible with how tf.keras.Model handles loss inputs
+        full_bat = targets[:, :-3]
+        cg_ref = targets[:, -3:]
 
         # Need to pick apart full BAT to compute log-probability correctly
         bat = tf.gather(full_bat[:, 9:], self.non_h_inds, axis=-1)
@@ -105,7 +107,7 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
         h_bond_vals = tf.tile(tf.reshape(self.h_bond_lengths, (1, -1)), (tf.shape(sample)[0], 1))
         full_sample = tf.transpose(tf.dynamic_stitch([self.non_h_inds, self.h_inds],
                                                 [tf.transpose(sample), tf.transpose(h_bond_vals)])
-                             )
+                                  )
 
         # Combine predicted values with root positions in target
         full_sample = tf.concat([full_bat[:, :9], full_sample], axis=-1)
@@ -115,7 +117,7 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
 
         # Compute location of CG reference site
         cg_sample = tf.reduce_sum(self.mass_weights * xyz_sample, axis=1)
-        
+
         # Assuming Gaussian distribution, enforce sampled CG close to reference
         cg_penalty = tf.reduce_sum((cg_sample - cg_ref)**2 / (2.0 * self.cg_var), axis=-1)
 
@@ -159,7 +161,7 @@ def build_model(n_atoms, embed_dim=20, hidden_dim=100):
     return model
 
 
-def train_model(read_dir='./', save_dir='./', save_name='sidechain'):
+def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_target=False):
     """
     Creates and trains a model for decoding a sidechain.
     """
@@ -174,8 +176,8 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain'):
             val_files.append(f)
         else:
             train_files.append(f)
-    train_dset = read_dataset(train_files)
-    val_dset = read_dataset(val_files)
+    train_dset = read_dataset(train_files, include_cg_target=include_cg_target)
+    val_dset = read_dataset(val_files, include_cg_target=include_cg_target)
 
     # Should shuffle and batch training dataset (also set up prefetching)
     # For validation, just batch and prefetch
@@ -221,10 +223,11 @@ def main(arg_list):
     parser.add_argument('res_type', help="residue type to prepare inputs for")
     parser.add_argument('--read_dir', '-r', default='./', help="directory to read files from")
     parser.add_argument('--save_dir', '-s', default='./', help="directory to save outputs to")
+    parser.add_argument('--cg_target', action='store_true') # Automatically sets default to False
 
     args = parser.parse_args(arg_list)
 
-    train_model(read_dir=args.read_dir, save_dir=args.save_dir, save_name=args.res_type)
+    train_model(read_dir=args.read_dir, save_dir=args.save_dir, save_name=args.res_type, include_cg_target=args.cg_target)
 
 
 if __name__ == "__main__":
