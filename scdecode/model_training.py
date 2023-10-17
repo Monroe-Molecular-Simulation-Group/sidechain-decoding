@@ -17,6 +17,9 @@ from .coord_transforms import bat_cartesian_tf
 
 
 # Need custom loss function to help enforce CG location
+# STILL NEED TO FIGURE OUT CORRECT BOND LENGTHS!
+# Want to take directly from force field, data_io.ff if possible
+# Should switch to having constrained H-bonds as default for all operations
 class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
     """
     A loss to enforce mapping of output to CG coordinates in addition to log probability.
@@ -45,18 +48,30 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
         n_bonds = len(bat_obj._torsions)
         h_inds = []
         non_h_inds = list(range(n_bonds*3))
+        h_bond_lengths = []
         if mask_H:
             for i, a in enumerate(bat_obj._ag1.atoms):
                 if a.name[0] == 'H':
+                    # Get index
                     h_inds.append(i)
                     non_h_inds.remove(i)
+
+                    # Get bond length
+                    res_name = a.residue.resname
+                    template = data_io.ff._templates[res_name]
+                    temp_ind1 = template.getAtomIndexByName(a.name)
+                    temp_ind2 = template.getAtomIndexByName(a.bonded_atoms[0].name)
+                    type1 = template.atoms[temp_ind1].type
+                    type2 = template.atoms[temp_ind2].type
+                    bset_1 = data_io.ff._forces[0].bondsForAtomType[type1]
+                    bset_2 = data_io.ff._forces[0].bondsForAtomType[type2]
+                    # Should only have ONE bond in intersection of sets
+                    bond_type_ind = list(bset_1.intersection(bset_2))[0]
+                    bond_len = data_io.ff._forces[0].length[bond_type_ind] * 10.0 # Convert from nm to Angstroms
+                    h_bond_lengths.append(bond_len)
         self.h_inds = h_inds
         self.non_h_inds = non_h_inds
-
-        # Somehow need to look up bond lengths!
-        # Actually matters for CG site location calculation
-        # For now just make ones
-        self.h_bond_lengths = tf.ones(len(h_inds))
+        self.h_bond_lengths = tf.convert_to_tensor(h_bond_lengths)
 
         # Also need masses of atoms contributing to sidechain CG position
         # That will include all but the first 2 root atoms and the HA atom
@@ -193,8 +208,12 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_
     model = build_model(n_atoms)
 
     # Set optimizer and compile
+    if include_cg_target:
+        loss = LogProbPenalizedCGLoss(bat_obj)
+    else:
+        loss = vaemolsim.losses.LogProbLoss()
     model.compile(tf.keras.optimizers.Adam(),
-                  loss=vaemolsim.losses.LogProbLoss(),
+                  loss=loss,
                  )
 
     # Any callbacks needed? Shouldn't really need annealing
