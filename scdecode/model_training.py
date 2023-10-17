@@ -17,9 +17,8 @@ from .coord_transforms import bat_cartesian_tf
 
 
 # Need custom loss function to help enforce CG location
-# STILL NEED TO FIGURE OUT CORRECT BOND LENGTHS!
-# Want to take directly from force field, data_io.ff if possible
-# Should switch to having constrained H-bonds as default for all operations
+# NEED TO ADD CLASS FUNCTION TO SAMPLE FROM DECODER AND ADD HYDROGENS BACK IN
+# (OR JUST ADD HYDROGENS BACK IN TO SAMPLE)
 class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
     """
     A loss to enforce mapping of output to CG coordinates in addition to log probability.
@@ -51,7 +50,7 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
         h_bond_lengths = []
         if mask_H:
             for i, a in enumerate(bat_obj._ag1.atoms):
-                if a.name[0] == 'H':
+                if a.element == 'H':
                     # Get index
                     h_inds.append(i)
                     non_h_inds.remove(i)
@@ -139,7 +138,7 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
         return log_prob + cg_penalty
 
 
-def build_model(n_atoms, embed_dim=20, hidden_dim=100):
+def build_model(n_atoms, n_H_bonds=0, embed_dim=20, hidden_dim=100):
     """
     Defines the model that will be used for side-chain decoding
     """
@@ -149,8 +148,8 @@ def build_model(n_atoms, embed_dim=20, hidden_dim=100):
     mask_and_embed = vaemolsim.mappings.LocalParticleDescriptors(mask_dist, particle_embed)
 
     # Define distribution (and mapping to it)
-    latent_dist = vaemolsim.dists.IndependentBlockwise(n_atoms * 3,
-                   [tfp.distributions.Normal] * (2 * n_atoms) + [tfp.distributions.VonMises] * n_atoms,
+    latent_dist = vaemolsim.dists.IndependentBlockwise(n_atoms * 3 - n_H_bonds,
+                   [tfp.distributions.Normal] * (2 * n_atoms - n_H_bonds) + [tfp.distributions.VonMises] * n_atoms,
                   ) # Bonds and angles modeled as normal distributions, torsions as von Mises
     flow = vaemolsim.flows.RQSSplineMAF(num_blocks=3, # Three RQS flows, middle with "random" ordering
                                         order_seed=42, # Setting seed makes order deterministic (so can load weights)
@@ -162,7 +161,7 @@ def build_model(n_atoms, embed_dim=20, hidden_dim=100):
                                         batch_norm=False, # Batch norm messes with fixed domain for periodic flows
                                        ) 
     decoder_dist = vaemolsim.dists.FlowedDistribution(flow, latent_dist)
-    _ = decoder_dist.flow(tf.ones([1, n_atoms * 3]),
+    _ = decoder_dist.flow(tf.ones([1, n_atoms * 3 - n_H_bonds]),
                           conditional_input=tf.ones([1, embed_dim])
                          ) # Build flow
     map_embed_to_dist = vaemolsim.mappings.FCDeepNN(decoder_dist.params_size(),
@@ -176,7 +175,7 @@ def build_model(n_atoms, embed_dim=20, hidden_dim=100):
     return model
 
 
-def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_target=False):
+def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_target=False, constrain_H_bonds=False):
     """
     Creates and trains a model for decoding a sidechain.
     """
@@ -205,11 +204,17 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_
     with open(bat_obj_file, 'rb') as f:
         bat_obj = pickle.load(f)
     n_atoms = len(bat_obj._torsions) # Will also be number of bonds, angles, and torsions
-    model = build_model(n_atoms)
+    n_H_bonds = 0
+    if constrain_H_bonds:
+        for i, a in enumerate(bat_obj._ag1.atoms):
+            if a.element == 'H':
+                n_H_bonds += 1
+
+    model = build_model(n_atoms, n_H_bonds=n_H_bonds)
 
     # Set optimizer and compile
     if include_cg_target:
-        loss = LogProbPenalizedCGLoss(bat_obj)
+        loss = LogProbPenalizedCGLoss(bat_obj, mask_H=constrain_H_bonds)
     else:
         loss = vaemolsim.losses.LogProbLoss()
     model.compile(tf.keras.optimizers.Adam(),
@@ -242,11 +247,18 @@ def main(arg_list):
     parser.add_argument('res_type', help="residue type to prepare inputs for")
     parser.add_argument('--read_dir', '-r', default='./', help="directory to read files from")
     parser.add_argument('--save_dir', '-s', default='./', help="directory to save outputs to")
-    parser.add_argument('--cg_target', action='store_true') # Automatically sets default to False
+    # Automatically sets default to False
+    parser.add_argument('--cg_target', action='store_true', help='whether or not to penalize CG bead distance') 
+    parser.add_argument('--h_bonds', action='store_true', help='whether or not to constain bonds with hydrogens')
 
     args = parser.parse_args(arg_list)
 
-    train_model(read_dir=args.read_dir, save_dir=args.save_dir, save_name=args.res_type, include_cg_target=args.cg_target)
+    train_model(read_dir=args.read_dir,
+                save_dir=args.save_dir,
+                save_name=args.res_type,
+                include_cg_target=args.cg_target,
+                constrain_H_bonds=args.h_bonds,
+               )
 
 
 if __name__ == "__main__":

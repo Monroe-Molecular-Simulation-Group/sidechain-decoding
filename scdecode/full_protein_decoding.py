@@ -65,6 +65,7 @@ def gather_bat_objects(res_types, search_dir='./'):
     return bat_dict
 
 
+# Need to add arguments --include_cg and --h_bonds analagously to train_model
 def gather_models(res_types,
                   bat_dict,
                   model_dir='./',
@@ -92,6 +93,9 @@ def gather_models(res_types,
             this_model = unconditional.build_model(n_atoms)
             build_data = tf.zeros((1, n_atoms*3), dtype=tf.float32)
         else:
+            # If constrain number of hydrogen bonds, need to consider and change below
+            # Same when picking loss - may not be LogProbLoss if penalizing CG configuration
+            # UPDATE BEFORE ANY MORE ANALYSIS
             this_model = model_training.build_model(n_atoms)
             # Note that have 112 FG and CG bead types total (when creating one-hot encoding of type)
             # That should show up in data_io.all_ref_types
@@ -120,6 +124,12 @@ def one_hot_from_types(types):
     return one_hot
 
 
+# Need to add arguments --include_cg and --h_bonds analagously to train_model
+# Should pass both to gather_models
+# But think hard about how to add hydrogen bond lengths back in...
+# Right now happens in loss, but needs to be a function accessible external to the loss
+# In other words, if given a decoder model, the loss should be able to sample and add in hydrogens
+# That way, can call model.loss.sample(decoder) or something similar and get full set of non-root BAT
 class ProteinDecoder(object):
     """
     Class for decoding a protein.

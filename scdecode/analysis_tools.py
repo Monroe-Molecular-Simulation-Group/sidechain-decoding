@@ -204,6 +204,7 @@ def create_cg_structure(pmd_struc, mda_uni=None):
     return combined_struc
 
 
+# Need to add arguments --include_cg and --h_bonds analagously to train_model
 def analyze_model(arg_list):
     """
     Command line tool for analyzing a decoding model..
@@ -260,6 +261,9 @@ def analyze_model(arg_list):
     if args.unconditional:
         model = unconditional.build_model(n_atoms)
     else:
+        # If constrain number of hydrogen bonds, need to consider and change below
+        # Same when picking loss - may not be LogProbLoss if penalizing CG configuration
+        # UPDATE BEFORE ANY MORE ANALYSIS
         model = model_training.build_model(n_atoms)
 
     # Compile, build by passing through one sample, and load weights
