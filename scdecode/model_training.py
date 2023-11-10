@@ -13,7 +13,7 @@ import vaemolsim
 from . import data_io
 
 from .data_io import read_dataset
-from .coord_transforms import bat_cartesian_tf
+from .coord_transforms import bat_cartesian_tf, get_h_bond_info
 
 
 # Need custom loss function to help enforce CG location
@@ -42,30 +42,12 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
 
         self.cg_var = cg_var
 
-        n_bonds = len(bat_obj._torsions)
-        h_inds = []
-        non_h_inds = list(range(n_bonds*3))
-        h_bond_lengths = []
         if mask_H:
-            for i, a in enumerate(bat_obj._ag1.atoms):
-                if a.element == 'H':
-                    # Get index
-                    h_inds.append(i)
-                    non_h_inds.remove(i)
-
-                    # Get bond length
-                    res_name = a.residue.resname
-                    template = data_io.ff._templates[res_name]
-                    temp_ind1 = template.getAtomIndexByName(a.name)
-                    temp_ind2 = template.getAtomIndexByName(a.bonded_atoms[0].name)
-                    type1 = template.atoms[temp_ind1].type
-                    type2 = template.atoms[temp_ind2].type
-                    bset_1 = data_io.ff._forces[0].bondsForAtomType[type1]
-                    bset_2 = data_io.ff._forces[0].bondsForAtomType[type2]
-                    # Should only have ONE bond in intersection of sets
-                    bond_type_ind = list(bset_1.intersection(bset_2))[0]
-                    bond_len = data_io.ff._forces[0].length[bond_type_ind] * 10.0 # Convert from nm to Angstroms
-                    h_bond_lengths.append(bond_len)
+            h_inds, non_h_inds, h_bond_lengths = get_h_bond_info(bat_obj)
+        else:
+            h_inds = []
+            non_h_inds = list(range(len(bat_obj._torsions)))
+            h_bond_lengths = []
         self.h_inds = h_inds
         self.non_h_inds = non_h_inds
         self.h_bond_lengths = tf.convert_to_tensor(h_bond_lengths)
@@ -82,21 +64,6 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
                 masses.append(0.0)
         mass_weights = np.array(masses) / np.sum(masses)
         self.mass_weights = tf.reshape(tf.cast(mass_weights, tf.float32), (1, -1, 1))
-
-    def fill_in_bat(self, partial_bat, root_bat):
-        """
-        Fills in BAT coordinates by adding hydrogen bonds back then concatenating with root atom coords.
-        """
-        # Insert H-bond values
-        h_bond_vals = tf.tile(tf.reshape(self.h_bond_lengths, (1, -1)), (tf.shape(partial_bat)[0], 1))
-        full_sample = tf.transpose(tf.dynamic_stitch([self.non_h_inds, self.h_inds],
-                                                [tf.transpose(partial_bat), tf.transpose(h_bond_vals)])
-                                  )
-
-        # Combine predicted values with root positions in target
-        full_sample = tf.concat([root_bat, full_sample], axis=-1)
-
-        return full_sample
 
     def call(self, targets, decoder):
         """
@@ -130,8 +97,14 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
         # Now need to sample from the distribution and check CG positions
         sample = decoder.sample()
 
-        # Get H-bonds back in and stitch sample together with root atoms
-        full_sample = self.fill_in_bat(sample, full_bat[:, :9])
+        # Insert H-bond values
+        h_bond_vals = tf.tile(tf.reshape(self.h_bond_lengths, (1, -1)), (tf.shape(sample)[0], 1))
+        full_sample = tf.transpose(tf.dynamic_stitch([self.non_h_inds, self.h_inds],
+                                                [tf.transpose(sample), tf.transpose(h_bond_vals)])
+                                  )
+        
+        # Combine predicted values with root positions in target
+        full_sample = tf.concat([full_bat[:, :9], full_sample], axis=-1)
 
         # Obtain XYZ indices
         xyz_sample = bat_cartesian_tf(full_sample, self.bat_obj)
@@ -256,7 +229,7 @@ def main(arg_list):
     parser.add_argument('--save_dir', '-s', default='./', help="directory to save outputs to")
     # Automatically sets default to False
     parser.add_argument('--cg_target', action='store_true', help='whether or not to penalize CG bead distance') 
-    parser.add_argument('--h_bonds', action='store_true', help='whether or not to constain bonds with hydrogens')
+    parser.add_argument('--h_bonds', action='store_true', help='whether or not to constrain bonds with hydrogens')
 
     args = parser.parse_args(arg_list)
 

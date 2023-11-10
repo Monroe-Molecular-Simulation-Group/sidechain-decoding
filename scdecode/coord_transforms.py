@@ -5,6 +5,8 @@ import tensorflow as tf
 
 import MDAnalysis as mda
 
+from . import data_io
+
 
 def bat_cartesian_tf(bat_frame, bat_obj):
     """
@@ -203,3 +205,75 @@ def fill_in_bat(partial_bat, root_pos):
         return tf.squeeze(full_bat)
     else:
         return full_bat
+
+def get_h_bond_info(bat_obj):
+    """
+    Extracts information on bonds involving hydrogens from BAT object
+
+    Parameters
+    ----------
+    bat_obj : MDAnalysis BAT analysis object
+        A BAT analysis object.
+
+    Returns
+    -------
+    h_inds : list
+        A list of BAT coordinate indices of bonds involving hydrogens
+    non_h_inds : list
+        A list of BAT coordinate indices for bonds NOT involving hydrogens
+    h_bond_lengths : list
+        A list of the lengths of bonds involving hydrogens
+    """
+    n_bonds = len(bat_obj._torsions)
+    h_inds = []
+    non_h_inds = list(range(n_bonds*3))
+    h_bond_lengths = []
+
+    for i, a in enumerate(bat_obj._ag1.atoms):
+        if a.element == 'H':
+            # Get index
+            h_inds.append(i)
+            non_h_inds.remove(i)
+            # Get bond length
+            res_name = a.residue.resname
+            template = data_io.ff._templates[res_name]
+            temp_ind1 = template.getAtomIndexByName(a.name)
+            temp_ind2 = template.getAtomIndexByName(a.bonded_atoms[0].name)
+            type1 = template.atoms[temp_ind1].type
+            type2 = template.atoms[temp_ind2].type
+            bset_1 = data_io.ff._forces[0].bondsForAtomType[type1]
+            bset_2 = data_io.ff._forces[0].bondsForAtomType[type2]
+            # Should only have ONE bond in intersection of sets
+            bond_type_ind = list(bset_1.intersection(bset_2))[0]
+            bond_len = data_io.ff._forces[0].length[bond_type_ind] * 10.0 # Convert from nm to Angstroms
+            h_bond_lengths.append(bond_len)
+
+    return h_inds, non_h_inds, h_bond_lengths
+
+
+def fill_in_h_bonds(partial_bat, h_inds, non_h_inds, h_bond_lengths):
+    """
+    Fills in values of bonds involving hydrogens given other BAT coordinates.
+
+    Parameters
+    ----------
+    partial_bat : NumPy array
+        Array of BAT set not including bonds with hydrogens
+    h_inds : list
+        Indices in complete BAT coordinates where have bonds involving hydrogens
+    non_h_inds : list
+        Indices of BAT coordinates not involving bonds with hydrogens
+    h_bond_lengths : list
+        Bond lengths corresponding to bonds involving hydrogens specified in h_inds
+
+    Returns
+    -------
+    filled_bat : NumPy array
+        Array of full BAT coordinates with bonds involving hydrogens filled in
+    """
+    h_bond_vals = np.tile(np.reshape(h_bond_lengths, (1, -1)), (partial_bat.shape[0], 1))
+    filled_bat = np.zeros((partial_bat.shape[0], partial_bat.shape[1] + len(h_inds)), dtype='float32')
+    filled_bat[:, h_inds] = h_bond_vals
+    filled_bat[:, non_h_inds] = partial_bat
+    return filled_bat
+

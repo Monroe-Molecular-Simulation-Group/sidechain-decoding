@@ -13,7 +13,7 @@ from openmm import app as mmapp
 
 import vaemolsim
 
-from . import data_io, model_training, unconditional, analysis_tools
+from . import data_io, model_training, unconditional, coord_transforms 
 
 
 def get_unique_res(sequence):
@@ -77,11 +77,15 @@ def gather_models(res_types,
     Given a sequence and dictionary of BAT objects, loads models for every residue type.
 
     Note that residue types should match the force field used for training (AMBER ff14sb).
-    AND, they should alredy be unique.
+    AND, they should already be unique.
+
+    Also returns dictionary of info for bonds involving hydrogens.
+    (will be important for decoding and sampling... don't want to rely on model loss)
     """
 
     # Loop over unique residue types and create dictionary mapping to decoding models
     decode_dict = {}
+    h_info_dict = {}
 
     for res in res_types:
 
@@ -90,21 +94,24 @@ def gather_models(res_types,
         # Get number of atoms for this residue type based on BAT object
         n_atoms = len(bat_dict[res]._torsions) # Will also be number of bonds, angles, and torsions
        
-        # And number of H-bonds that will be constrained
-        n_H_bonds = 0
+        # And number of H-bonds that will be constrained, along with H bond info
         if constrain_H_bonds:
-            for i, a in enumerate(bat_obj._ag1.atoms):
-                if a.element == 'H':
-                    n_H_bonds += 1
+            h_inds, non_h_inds, h_bond_lengths = get_h_bond_info(bat_dict[res])
+            n_H_bonds = len(h_inds)
+        else:
+            h_inds = []
+            non_h_inds = list(range(len(bat_dict[res]._torsions)))
+            h_bond_lengths = []
+            n_H_bonds = 0
+
+        # Add to dictionary of bonds involving hydrogens
+        h_info_dict[res] = [h_inds, non_h_inds, h_bond_lengths]
 
         # Build the model depending on whether it should be unconditional or not
         if res in unconditional_types:
-            this_model = unconditional.build_model(n_atoms)
+            this_model = unconditional.build_model(n_atoms, n_H_bonds=n_H_bonds)
             build_data = tf.zeros((1, n_atoms*3), dtype=tf.float32)
         else:
-            # If constrain number of hydrogen bonds, need to consider and change below
-            # Same when picking loss - may not be LogProbLoss if penalizing CG configuration
-            # UPDATE BEFORE ANY MORE ANALYSIS
             this_model = model_training.build_model(n_atoms, n_H_bonds=n_H_bonds)
             # Note that have 112 FG and CG bead types total (when creating one-hot encoding of type)
             # That should show up in data_io.all_ref_types
@@ -114,7 +121,7 @@ def gather_models(res_types,
                          )
     
         # Set up right loss
-        if include_cg_target:
+        if include_cg_target and res not in unconditional_types:
             loss = LogProbPenalizedCGLoss(bat_dict[res], mask_H=constrain_H_bonds)
         else:
             loss = vaemolsim.losses.LogProbLoss()
@@ -129,7 +136,7 @@ def gather_models(res_types,
 
         decode_dict[res] = this_model
 
-    return decode_dict
+    return decode_dict, h_info_dict
 
 
 def one_hot_from_types(types):
@@ -139,18 +146,14 @@ def one_hot_from_types(types):
     return one_hot
 
 
-# Need to add arguments --include_cg and --h_bonds analagously to train_model
-# Should pass both to gather_models
-# But think hard about how to add hydrogen bond lengths back in...
-# Right now happens in loss, but needs to be a function accessible external to the loss
-# In other words, if given a decoder model, the loss should be able to sample and add in hydrogens
-# That way, can call model.loss.sample(decoder) or something similar and get full set of non-root BAT
 class ProteinDecoder(object):
     """
     Class for decoding a protein.
     """
 
-    def __init__(self, pdb_file, bat_dir='./', model_dir='./', bat_dict=None, model_dict=None, include_cg=False, h_bonds=False):
+    def __init__(self, pdb_file, bat_dir='./', model_dir='./',
+                 bat_dict=None, model_dict=None, h_info_dict=None,
+                 include_cg=False, h_bonds=False):
         """
         Given a cleaned up PDB file, creates a class instance.
         """
@@ -185,15 +188,16 @@ class ProteinDecoder(object):
             self.bat_dict = gather_bat_objects(unique_res, search_dir=bat_dir)
         else:
             self.bat_dict = bat_dict
-        if model_dict is None:
-            self.model_dict = gather_models(unique_res,
-                                            self.bat_dict,
-                                            model_dir=model_dir,
-                                            include_cg_target=include_cg,
-                                            constrain_H_bonds=h_bonds,
-                                           )
+        if model_dict is None or h_info_dict is None:
+            self.model_dict, self.h_info_dict = gather_models(unique_res,
+                                                              self.bat_dict,
+                                                              model_dir=model_dir,
+                                                              include_cg_target=include_cg,
+                                                              constrain_H_bonds=h_bonds,
+                                                             )
         else:
             self.model_dict = model_dict
+            self.h_info_dict = h_info_dict
 
         # Will need structure of only CG atoms (for getting those indices specifically, etc.)
         cg_struc = self.pmd_struc[data_io.cg_atoms] # Positions of only CG atoms (without sidechain beads)
@@ -334,6 +338,7 @@ class ProteinDecoder(object):
         for i, res in enumerate(self.uncond_seq):
             bat = self.bat_dict[res]
             bat_input = tf.tile(tf.cast(bat.results.bat[:, 9:], tf.float32), (n_samples, 1))
+            bat_input = bat_input[:, self.h_info_dict[res][1]]
 
             # If want probabilities, cannot use predict_on_batch...
             # Need distribution, then compute log_probabilities of sample
@@ -342,14 +347,13 @@ class ProteinDecoder(object):
             prob = dist.log_prob(sample)
             decoded_probs.append(prob)
 
+            # Fill in hydrogens
+            full_bat_sample = coord_transforms.fill_in_h_bonds(sample.numpy(), *self.h_info_dict[res])
+
             # Convert BAT coordinates to xyz
-            try:
-                full_bat_sample = self.model_dict[res].loss.fill_in_bat(sample,
-                                                                cg_config.numpy()[:, self.uncond_root_inds[i], :])
-            except AttributeError:
-                full_bat_sample = analysis_tools.fill_in_bat(sample,
-                                                         cg_config.numpy()[:, self.uncond_root_inds[i], :])
-            sample_xyz = analysis_tools.xyz_from_bat(full_bat_sample, bat)
+            full_bat_sample = coord_transforms.fill_in_bat(full_bat_sample,
+                                                           cg_config.numpy()[:, self.uncond_root_inds[i], :])
+            sample_xyz = coord_transforms.xyz_from_bat(full_bat_sample, bat)
             # But want to exclude the root atom indices, which are already in the CG config
             sample_xyz = np.delete(sample_xyz, self.bat_dict[res]._root_XYZ_inds, axis=1)
             decoded_coords.append(tf.convert_to_tensor(sample_xyz, dtype=tf.float32))
@@ -378,14 +382,13 @@ class ProteinDecoder(object):
             prob = dist.log_prob(sample)
             decoded_probs.append(prob)
 
+            # Fill in hydrogens
+            full_bat_sample = coord_transforms.fill_in_h_bonds(sample.numpy(), *self.h_info_dict[res])
+
             # Convert BAT coordinates to xyz
-            try:
-                full_bat_sample = self.model_dict[res].loss.fill_in_bat(sample,
-                                                                cg_config.numpy()[:, self.uncond_root_inds[i], :])
-            except AttributeError:
-                full_bat_sample = analysis_tools.fill_in_bat(sample,
-                                                         cg_config.numpy()[:, self.uncond_root_inds[i], :])
-            sample_xyz = analysis_tools.xyz_from_bat(full_bat_sample, self.bat_dict[res])
+            full_bat_sample = coord_transforms.fill_in_bat(full_bat_sample,
+                                                           cg_config.numpy()[:, self.cond_root_inds[i], :])
+            sample_xyz = coord_transforms.xyz_from_bat(full_bat_sample, self.bat_dict[res])
             # But want to exclude the root atom indices, which are already in the CG config
             sample_xyz = np.delete(sample_xyz, self.bat_dict[res]._root_XYZ_inds, axis=1)
             decoded_coords.append(tf.convert_to_tensor(sample_xyz, dtype=tf.float32))
