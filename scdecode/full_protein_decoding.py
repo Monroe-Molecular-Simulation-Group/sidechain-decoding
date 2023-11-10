@@ -69,6 +69,8 @@ def gather_bat_objects(res_types, search_dir='./'):
 def gather_models(res_types,
                   bat_dict,
                   model_dir='./',
+                  include_cg_target=False,
+                  constrain_H_bonds=False,
                   unconditional_types=['GLY', 'NPRO', 'Nterm'],
                  ):
     """
@@ -88,6 +90,13 @@ def gather_models(res_types,
         # Get number of atoms for this residue type based on BAT object
         n_atoms = len(bat_dict[res]._torsions) # Will also be number of bonds, angles, and torsions
        
+        # And number of H-bonds that will be constrained
+        n_H_bonds = 0
+        if constrain_H_bonds:
+            for i, a in enumerate(bat_obj._ag1.atoms):
+                if a.element == 'H':
+                    n_H_bonds += 1
+
         # Build the model depending on whether it should be unconditional or not
         if res in unconditional_types:
             this_model = unconditional.build_model(n_atoms)
@@ -96,7 +105,7 @@ def gather_models(res_types,
             # If constrain number of hydrogen bonds, need to consider and change below
             # Same when picking loss - may not be LogProbLoss if penalizing CG configuration
             # UPDATE BEFORE ANY MORE ANALYSIS
-            this_model = model_training.build_model(n_atoms)
+            this_model = model_training.build_model(n_atoms, n_H_bonds=n_H_bonds)
             # Note that have 112 FG and CG bead types total (when creating one-hot encoding of type)
             # That should show up in data_io.all_ref_types
             build_data = (tf.zeros((1, 3), dtype=tf.float32),
@@ -104,9 +113,15 @@ def gather_models(res_types,
                           tf.reshape(tf.cast(tf.range(len(data_io.all_ref_types)) < 1, tf.float32), (1, 1, -1)),
                          )
     
+        # Set up right loss
+        if include_cg_target:
+            loss = LogProbPenalizedCGLoss(bat_dict[res], mask_H=constrain_H_bonds)
+        else:
+            loss = vaemolsim.losses.LogProbLoss()
+
         # Compile, build by passing through one sample, and load weights
         this_model.compile(tf.keras.optimizers.Adam(),
-                           loss=vaemolsim.losses.LogProbLoss(),
+                           loss=loss,
                           )
         _ = this_model(build_data)
         this_model_ckpt = '%s/%s_decoder/%s_weights.ckpt'%(model_dir, res, res)
@@ -135,7 +150,7 @@ class ProteinDecoder(object):
     Class for decoding a protein.
     """
 
-    def __init__(self, pdb_file, bat_dir='./', model_dir='./', bat_dict=None, model_dict=None):
+    def __init__(self, pdb_file, bat_dir='./', model_dir='./', bat_dict=None, model_dict=None, include_cg=False, h_bonds=False):
         """
         Given a cleaned up PDB file, creates a class instance.
         """
@@ -171,7 +186,12 @@ class ProteinDecoder(object):
         else:
             self.bat_dict = bat_dict
         if model_dict is None:
-            self.model_dict = gather_models(unique_res, self.bat_dict, model_dir=model_dir)
+            self.model_dict = gather_models(unique_res,
+                                            self.bat_dict,
+                                            model_dir=model_dir,
+                                            include_cg_target=include_cg,
+                                            constrain_H_bonds=h_bonds,
+                                           )
         else:
             self.model_dict = model_dict
 
@@ -323,7 +343,11 @@ class ProteinDecoder(object):
             decoded_probs.append(prob)
 
             # Convert BAT coordinates to xyz
-            full_bat_sample = analysis_tools.fill_in_bat(sample,
+            try:
+                full_bat_sample = self.model_dict[res].loss.fill_in_bat(sample,
+                                                                cg_config.numpy()[:, self.uncond_root_inds[i], :])
+            except AttributeError:
+                full_bat_sample = analysis_tools.fill_in_bat(sample,
                                                          cg_config.numpy()[:, self.uncond_root_inds[i], :])
             sample_xyz = analysis_tools.xyz_from_bat(full_bat_sample, bat)
             # But want to exclude the root atom indices, which are already in the CG config
@@ -355,8 +379,12 @@ class ProteinDecoder(object):
             decoded_probs.append(prob)
 
             # Convert BAT coordinates to xyz
-            full_bat_sample = analysis_tools.fill_in_bat(sample,
-                                                         cg_config.numpy()[:, self.cond_root_inds[i], :])
+            try:
+                full_bat_sample = self.model_dict[res].loss.fill_in_bat(sample,
+                                                                cg_config.numpy()[:, self.uncond_root_inds[i], :])
+            except AttributeError:
+                full_bat_sample = analysis_tools.fill_in_bat(sample,
+                                                         cg_config.numpy()[:, self.uncond_root_inds[i], :])
             sample_xyz = analysis_tools.xyz_from_bat(full_bat_sample, self.bat_dict[res])
             # But want to exclude the root atom indices, which are already in the CG config
             sample_xyz = np.delete(sample_xyz, self.bat_dict[res]._root_XYZ_inds, axis=1)

@@ -451,11 +451,6 @@ def read_dataset(files, include_cg_target=False):
     return shaped_dset
 
 
-def read_dataset_cg_penalized_loss(files):
-    """
-    """
-
-
 def main(arg_list):
     parser = argparse.ArgumentParser(prog='data_io.py',
                                      description='Generates training inputs for all pdb files in a directory',

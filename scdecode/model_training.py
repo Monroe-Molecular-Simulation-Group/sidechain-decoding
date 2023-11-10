@@ -17,8 +17,6 @@ from .coord_transforms import bat_cartesian_tf
 
 
 # Need custom loss function to help enforce CG location
-# NEED TO ADD CLASS FUNCTION TO SAMPLE FROM DECODER AND ADD HYDROGENS BACK IN
-# (OR JUST ADD HYDROGENS BACK IN TO SAMPLE)
 class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
     """
     A loss to enforce mapping of output to CG coordinates in addition to log probability.
@@ -85,6 +83,21 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
         mass_weights = np.array(masses) / np.sum(masses)
         self.mass_weights = tf.reshape(tf.cast(mass_weights, tf.float32), (1, -1, 1))
 
+    def fill_in_bat(self, partial_bat, root_bat):
+        """
+        Fills in BAT coordinates by adding hydrogen bonds back then concatenating with root atom coords.
+        """
+        # Insert H-bond values
+        h_bond_vals = tf.tile(tf.reshape(self.h_bond_lengths, (1, -1)), (tf.shape(partial_bat)[0], 1))
+        full_sample = tf.transpose(tf.dynamic_stitch([self.non_h_inds, self.h_inds],
+                                                [tf.transpose(partial_bat), tf.transpose(h_bond_vals)])
+                                  )
+
+        # Combine predicted values with root positions in target
+        full_sample = tf.concat([root_bat, full_sample], axis=-1)
+
+        return full_sample
+
     def call(self, targets, decoder):
         """
         Computes the log-probability of samples under a provided tfp.distribution object.
@@ -117,14 +130,8 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
         # Now need to sample from the distribution and check CG positions
         sample = decoder.sample()
 
-        # Insert H-bond values
-        h_bond_vals = tf.tile(tf.reshape(self.h_bond_lengths, (1, -1)), (tf.shape(sample)[0], 1))
-        full_sample = tf.transpose(tf.dynamic_stitch([self.non_h_inds, self.h_inds],
-                                                [tf.transpose(sample), tf.transpose(h_bond_vals)])
-                                  )
-
-        # Combine predicted values with root positions in target
-        full_sample = tf.concat([full_bat[:, :9], full_sample], axis=-1)
+        # Get H-bonds back in and stitch sample together with root atoms
+        full_sample = self.fill_in_bat(sample, full_bat[:, :9])
 
         # Obtain XYZ indices
         xyz_sample = bat_cartesian_tf(full_sample, self.bat_obj)
@@ -181,7 +188,7 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_
     """
 
     # Read in data, randomly splitting based on .tfrecord files
-    # Means will not be exactly 90/10, but will be closish
+    # Means will not be exactly 90/10, but will be close-ish
     files = glob.glob('%s/*.tfrecord'%read_dir)
     train_files = []
     val_files = []
