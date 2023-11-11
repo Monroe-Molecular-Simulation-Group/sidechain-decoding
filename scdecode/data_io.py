@@ -63,7 +63,7 @@ def inputs_from_pdb(pdb_file, res_name, mod_info,
     not_bat_atom_str : str, default '@N,O,H,OXT,H1,H2,H3'
         A string following ParmEd atom selection format specifying which atoms in a residue
         will NOT be included when generating BAT coordinates. Also excludes the special
-        atoms of terminal residues.
+        atoms of terminal residues. For GLY, instead want '@N,H,OXT,H1,H2,H3'
     cg_atom_list : list, default ['N', 'CA', 'C', 'O', 'H', 'CB', 'OXT']
         A list of atom names that will be included in the "CG" representation of a protein.
     rng : object, default np.random.default_rng()
@@ -481,9 +481,14 @@ def main(arg_list):
     for p in pdb_list:
         pdb_id = os.path.split(p)[-1].split('.pdb')[0]
         this_mod = mod_info[pdb_id]
+
+        if args.res_type == 'GLY':
+            this_not_bat = '@N,H,OXT,H1,H2,H3'
+        else:
+            this_not_bat = not_bat_atoms
        
         try:
-            inputs = inputs_from_pdb(p, args.res_type, this_mod, rng=rng)
+            inputs = inputs_from_pdb(p, args.res_type, this_mod, rng=rng, not_bat_atom_str=this_not_bat)
         except Exception as exc:
             print('On file %s, failed with exception:\n%s'%(p, str(exc)))
             inputs = None

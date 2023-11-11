@@ -34,7 +34,11 @@ def inputs_from_pdb(pdb_file,
     More generally, this function prepares inputs for residues for which we
     will not be considering the local environment when generating a decoding
     distribution. This is the case for only generating hydrogens for N-terminal
-    amino acids, or for glycine.
+    amino acids, or for glycine. It turns out that GLY will have problems with
+    using O, C, and CA as the root atoms. That is because it will not be
+    conditioned on the location of N, which will lead to issues. MDAnalysis
+    BAT objects, however, cannot handle using C, CA, and N as the root atoms
+    because then all dihedrals describing the hydrogens would be improper.
 
     Parameters
     ----------

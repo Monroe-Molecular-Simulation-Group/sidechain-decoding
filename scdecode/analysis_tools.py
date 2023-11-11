@@ -218,6 +218,8 @@ def analyze_model(arg_list):
     parser.add_argument('--save_prefix', '-s', default=None, help='prefix for files that will be saved')
     parser.add_argument('--rng_seed', default=42, type=int, help='random number seed for selecting configs')
     parser.add_argument('--unconditional', action='store_true', help='whether or not model is unconditional')
+    parser.add_argument('--cg_target', action='store_true', help='whether or not to penalize CG bead distance') 
+    parser.add_argument('--h_bonds', action='store_true', help='whether or not to constrain bonds with hydrogens')
 
     args = parser.parse_args(arg_list)
 
@@ -258,17 +260,30 @@ def analyze_model(arg_list):
 
     # Create the appropriate model
     n_atoms = len(bat_obj._torsions) # Will also be number of bonds, angles, and torsions
-    if args.unconditional:
-        model = unconditional.build_model(n_atoms)
+    # Get number of H-bonds that will be constrained, along with H bond info
+    if args.h_bonds:
+        h_inds, non_h_inds, h_bond_lengths = coord_transforms.get_h_bond_info(bat_dict[res])
+        n_H_bonds = len(h_inds)
     else:
-        # If constrain number of hydrogen bonds, need to consider and change below
-        # Same when picking loss - may not be LogProbLoss if penalizing CG configuration
-        # UPDATE BEFORE ANY MORE ANALYSIS
-        model = model_training.build_model(n_atoms)
+        h_inds = []
+        non_h_inds = list(range(len(bat_dict[res]._torsions)))
+        h_bond_lengths = []
+        n_H_bonds = 0
+
+    if args.unconditional:
+        model = unconditional.build_model(n_atoms, n_H_bonds=n_H_bonds)
+    else:
+        model = model_training.build_model(n_atoms, n_H_bonds=n_H_bonds)
+
+    # Set optimizer and compile
+    if args.cg_target and not args.unconditional:
+        loss = LogProbPenalizedCGLoss(bat_obj, mask_H=constrain_H_bonds)
+    else:
+        loss = vaemolsim.losses.LogProbLoss()
 
     # Compile, build by passing through one sample, and load weights
     model.compile(tf.keras.optimizers.Adam(),
-                  loss=vaemolsim.losses.LogProbLoss(),
+                  loss=loss,
                  )
     build_data = next(iter(dset))[0]
     _ = model(build_data)
@@ -281,6 +296,9 @@ def analyze_model(arg_list):
     # For just a flow with a static distribution, need to create static to match batch_size (within the make_distribution_fn)
     # Then for others, should get batch size right, but be careful when sampling one distribution extra times
     samples = model.predict(dset, verbose=2)
+
+    # Fill in hydrogens (works whether constrained or not)
+    samples = coord_transforms.fill_in_h_bonds(samples.numpy(), h_inds, non_h_inds, h_bond_lengths)
 
     # Produce and save distributions of BAT samples
     m_hists, m_edges = build_bat_histograms(samples)
@@ -320,6 +338,7 @@ def analyze_model(arg_list):
                 this_input = [tf.gather(d, [this_sample_ind,], axis=0) for d in inputs]
             dist = model(this_input)
             extra_samples = np.squeeze(dist.sample(10000))
+            extra_samples = coord_transforms.fill_in_h_bonds(extra_samples, h_inds, non_h_inds, h_bond_lengths)
             this_hist, this_edges = build_bat_histograms(extra_samples)
             # Once have histograms, label uniquely with keys
             for k in this_hist.keys():
@@ -527,4 +546,4 @@ if __name__ == "__main__":
     elif sys.argv[1] == 'plot_analysis':
         plot_analysis(sys.argv[2:])
     else:
-        print("Argument \'%s\' unrecognized. For the first argument, select \'bat_stats\' or \'analyze_model\'.")
+        print("Argument \'%s\' unrecognized. For the first argument, select \'bat_stats\', \'analyze_model\', or \'plot_analysis\'.")

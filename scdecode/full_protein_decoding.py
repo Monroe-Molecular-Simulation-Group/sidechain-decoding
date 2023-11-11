@@ -13,7 +13,7 @@ from openmm import app as mmapp
 
 import vaemolsim
 
-from . import data_io, model_training, unconditional, coord_transforms 
+from . import data_io, coord_transforms, model_training, unconditional 
 
 
 def get_unique_res(sequence):
@@ -71,7 +71,7 @@ def gather_models(res_types,
                   model_dir='./',
                   include_cg_target=False,
                   constrain_H_bonds=False,
-                  unconditional_types=['GLY', 'NPRO', 'Nterm'],
+                  unconditional_types=['NPRO', 'Nterm'], # ['GLY', 'NPRO', 'Nterm'],
                  ):
     """
     Given a sequence and dictionary of BAT objects, loads models for every residue type.
@@ -96,7 +96,7 @@ def gather_models(res_types,
        
         # And number of H-bonds that will be constrained, along with H bond info
         if constrain_H_bonds:
-            h_inds, non_h_inds, h_bond_lengths = get_h_bond_info(bat_dict[res])
+            h_inds, non_h_inds, h_bond_lengths = coord_transforms.get_h_bond_info(bat_dict[res])
             n_H_bonds = len(h_inds)
         else:
             h_inds = []
@@ -283,17 +283,17 @@ class ProteinDecoder(object):
             this_decode_names = [a.name for a in self.bat_dict[res_name]._ag if a.name not in this_root_names]
             this_decode_inds = [self.pmd_struc.view[':%i@%s'%(i + 1, a)].atoms[0].idx for a in this_decode_names]
             this_one_hot = one_hot_from_types(atom_types[this_decode_inds])
-            if res_name == 'GLY':
-                uncond_seq.append(res_name)
-                uncond_root_inds.append(this_root_inds)
-                uncond_decode_inds.append(this_decode_inds)
-                uncond_one_hot.append(this_one_hot)
-            else:
-                cond_seq.append(res_name)
-                cond_root_inds.append(this_root_inds)
-                cond_one_hot.append(this_one_hot)
-                cond_decode_inds.append(this_decode_inds)
-                cond_cg_ref_inds.append(i - len(self.sequence))
+            # if res_name == 'GLY':
+            #     uncond_seq.append(res_name)
+            #     uncond_root_inds.append(this_root_inds)
+            #     uncond_decode_inds.append(this_decode_inds)
+            #     uncond_one_hot.append(this_one_hot)
+            # else:
+            cond_seq.append(res_name)
+            cond_root_inds.append(this_root_inds)
+            cond_one_hot.append(this_one_hot)
+            cond_decode_inds.append(this_decode_inds)
+            cond_cg_ref_inds.append(i - len(self.sequence))
 
         self.uncond_root_inds = uncond_root_inds
         self.uncond_seq = uncond_seq
