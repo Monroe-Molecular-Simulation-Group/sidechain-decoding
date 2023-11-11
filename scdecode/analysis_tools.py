@@ -238,21 +238,6 @@ def analyze_model(arg_list):
     ref_hists, ref_edges = build_bat_histograms(full_bat[:, 9:])
     np.savez('%s_BAT_data.npz'%args.save_prefix, **ref_hists, **ref_edges)
 
-    # Next identify training files and load dataset without batching
-    if args.unconditional:
-        # Unless working with unconditional stuff...
-        # Then dset is just the full_bat stuff
-        dset = tf.data.Dataset.from_tensor_slices((full_bat, full_bat)).batch(batch_size)
-    else:
-        train_files = glob.glob('%s/*.tfrecord'%args.read_dir)
-        train_files.sort()
-        train_files = train_files
-        dset = data_io.read_dataset(train_files)
-        # Want CG coordinates for comparison
-        cg_only_dset = dset.map(lambda x, y : x[0]).batch(1000)
-        cg_refs = np.vstack([cg for cg in cg_only_dset])
-        dset = dset.ragged_batch(batch_size)
-
     # Load the BAT analysis object
     bat_obj_file = glob.glob('%s/*.pkl'%args.read_dir)[0]
     with open(bat_obj_file, 'rb') as f:
@@ -275,11 +260,26 @@ def analyze_model(arg_list):
     else:
         model = model_training.build_model(n_atoms, n_H_bonds=n_H_bonds)
 
-    # Set optimizer and compile
+    # Select loss
     if args.cg_target and not args.unconditional:
-        loss = LogProbPenalizedCGLoss(bat_obj, mask_H=constrain_H_bonds)
+        loss = LogProbPenalizedCGLoss(bat_obj, mask_H=args.h_bonds)
     else:
         loss = vaemolsim.losses.LogProbLoss()
+
+    # Next identify training files and load dataset without batching
+    if args.unconditional:
+        # Unless working with unconditional stuff...
+        # Then dset is just the full_bat stuff
+        dset = tf.data.Dataset.from_tensor_slices((full_bat[:, non_h_inds], full_bat[:, non_h_inds])).batch(batch_size)
+    else:
+        train_files = glob.glob('%s/*.tfrecord'%args.read_dir)
+        train_files.sort()
+        train_files = train_files
+        dset = data_io.read_dataset(train_files, include_cg_target=args.cg_target)
+        # Want CG coordinates for comparison
+        cg_only_dset = dset.map(lambda x, y : x[0]).batch(1000)
+        cg_refs = np.vstack([cg for cg in cg_only_dset])
+        dset = dset.ragged_batch(batch_size)
 
     # Compile, build by passing through one sample, and load weights
     model.compile(tf.keras.optimizers.Adam(),
