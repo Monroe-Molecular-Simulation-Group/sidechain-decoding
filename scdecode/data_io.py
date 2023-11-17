@@ -197,7 +197,10 @@ def inputs_from_pdb(pdb_file, res_name, mod_info,
         # Also need BAT coordinates for just this residue
         this_bat_atoms = struc['(:%i)&(!(%s))'%(res.idx + 1, not_bat_atom_str)]
         uni = mda.Universe(this_bat_atoms.topology, np.array(this_bat_atoms.coordinates, dtype='float32'))
-        bat_analysis = BAT(uni.select_atoms('all'), initial_atom=uni.select_atoms('name C')[0])
+        if res_name == 'GLY':
+            bat_analysis = BAT(uni.select_atoms('all'), initial_atom=uni.select_atoms('name O')[0])
+        else:
+            bat_analysis = BAT(uni.select_atoms('all'), initial_atom=uni.select_atoms('name C')[0])
         bat_analysis.run()
         this_bat = bat_analysis.results.bat[0] # Includes N, CA, and CB atom information
         full_bat.append(this_bat)

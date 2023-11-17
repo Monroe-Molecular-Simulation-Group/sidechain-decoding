@@ -122,7 +122,7 @@ def gather_models(res_types,
     
         # Set up right loss
         if include_cg_target and res not in unconditional_types:
-            loss = LogProbPenalizedCGLoss(bat_dict[res], mask_H=constrain_H_bonds)
+            loss = model_training.LogProbPenalizedCGLoss(bat_dict[res], mask_H=constrain_H_bonds)
         else:
             loss = vaemolsim.losses.LogProbLoss()
 

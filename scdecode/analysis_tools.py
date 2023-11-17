@@ -247,11 +247,11 @@ def analyze_model(arg_list):
     n_atoms = len(bat_obj._torsions) # Will also be number of bonds, angles, and torsions
     # Get number of H-bonds that will be constrained, along with H bond info
     if args.h_bonds:
-        h_inds, non_h_inds, h_bond_lengths = coord_transforms.get_h_bond_info(bat_dict[res])
+        h_inds, non_h_inds, h_bond_lengths = coord_transforms.get_h_bond_info(bat_obj)
         n_H_bonds = len(h_inds)
     else:
         h_inds = []
-        non_h_inds = list(range(len(bat_dict[res]._torsions)))
+        non_h_inds = list(range(len(bat_obj._torsions)))
         h_bond_lengths = []
         n_H_bonds = 0
 
@@ -262,7 +262,7 @@ def analyze_model(arg_list):
 
     # Select loss
     if args.cg_target and not args.unconditional:
-        loss = LogProbPenalizedCGLoss(bat_obj, mask_H=args.h_bonds)
+        loss = model_training.LogProbPenalizedCGLoss(bat_obj, mask_H=args.h_bonds)
     else:
         loss = vaemolsim.losses.LogProbLoss()
 
@@ -298,7 +298,7 @@ def analyze_model(arg_list):
     samples = model.predict(dset, verbose=2)
 
     # Fill in hydrogens (works whether constrained or not)
-    samples = coord_transforms.fill_in_h_bonds(samples.numpy(), h_inds, non_h_inds, h_bond_lengths)
+    samples = coord_transforms.fill_in_h_bonds(samples, h_inds, non_h_inds, h_bond_lengths)
 
     # Produce and save distributions of BAT samples
     m_hists, m_edges = build_bat_histograms(samples)

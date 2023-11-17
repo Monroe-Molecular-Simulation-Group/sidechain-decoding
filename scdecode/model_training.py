@@ -22,7 +22,7 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
     A loss to enforce mapping of output to CG coordinates in addition to log probability.
     """
 
-    def __init__(self, bat_obj, cg_var=1.0, mask_H=False, name='log_prob_cg_loss', **kwargs):
+    def __init__(self, bat_obj, cg_var=0.25, mask_H=False, name='log_prob_cg_loss', **kwargs):
         """
         Creates loss object.
 
@@ -123,7 +123,7 @@ def build_model(n_atoms, n_H_bonds=0, embed_dim=20, hidden_dim=100):
     Defines the model that will be used for side-chain decoding
     """
     # Define distance-based embedding
-    mask_dist = vaemolsim.mappings.DistanceSelection(5.0, 50) # 5 Angstrom cutoff, no more then 50 particles included
+    mask_dist = vaemolsim.mappings.DistanceSelection(8.0, 50) # 8 Angstrom cutoff, no more then 50 particles included
     particle_embed = vaemolsim.mappings.ParticleEmbedding(embed_dim)
     mask_and_embed = vaemolsim.mappings.LocalParticleDescriptors(mask_dist, particle_embed)
 

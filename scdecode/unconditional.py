@@ -18,7 +18,7 @@ from MDAnalysis.analysis.bat import BAT
 import vaemolsim
 
 from . import data_io
-from .coord_transform import get_h_bond_info
+from .coord_transforms import get_h_bond_info
 
 
 def inputs_from_pdb(pdb_file,
@@ -126,6 +126,14 @@ def inputs_from_pdb(pdb_file,
 
     # Clean up and return
     full_bat = np.array(full_bat, dtype='float32')
+    if prep_n_terminal:
+        # Ensure residue type is N-terminal
+        nterm_resname = 'N'+str(bat_analysis._ag[0].resname)
+        for a in bat_analysis._ag:
+            a.residue.resname = nterm_resname
+            # And make sure naming consistent with force field
+            if a.name == 'H':
+                a.name = 'H1'
 
     return full_bat, bat_analysis
 
