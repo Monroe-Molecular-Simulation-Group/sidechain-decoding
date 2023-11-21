@@ -18,6 +18,7 @@ from MDAnalysis.analysis.bat import BAT
 import vaemolsim
 
 from . import data_io
+from .coord_transforms import get_h_bond_info
 
 
 def inputs_from_pdb(pdb_file,
@@ -33,7 +34,11 @@ def inputs_from_pdb(pdb_file,
     More generally, this function prepares inputs for residues for which we
     will not be considering the local environment when generating a decoding
     distribution. This is the case for only generating hydrogens for N-terminal
-    amino acids, or for glycine.
+    amino acids, or for glycine. It turns out that GLY will have problems with
+    using O, C, and CA as the root atoms. That is because it will not be
+    conditioned on the location of N, which will lead to issues. MDAnalysis
+    BAT objects, however, cannot handle using C, CA, and N as the root atoms
+    because then all dihedrals describing the hydrogens would be improper.
 
     Parameters
     ----------
@@ -121,22 +126,31 @@ def inputs_from_pdb(pdb_file,
 
     # Clean up and return
     full_bat = np.array(full_bat, dtype='float32')
+    if prep_n_terminal:
+        # Ensure residue type is N-terminal
+        nterm_resname = 'N'+str(bat_analysis._ag[0].resname)
+        for a in bat_analysis._ag:
+            a.residue.resname = nterm_resname
+            # And make sure naming consistent with force field
+            if a.name == 'H':
+                a.name = 'H1'
 
     return full_bat, bat_analysis
 
 
-def build_model(n_atoms, hidden_dim=100):
+def build_model(n_atoms, n_H_bonds=0, hidden_dim=100):
     """
     Defines the model that will be used for decoding
 
     For this model, note the model is unconditional on other atoms present.
-    As such, the decoder distribution along specifies the entire model
+    As such, the decoder distribution alone specifies the entire model
     """
     # Define distribution
     # Note setting normal distributions to a std of 0.5 rather than 1
     # This is just so that effectively all of the latent distribution fits inside [-np.pi, np.pi]
     latent_dist = tfp.layers.DistributionLambda(make_distribution_fn=lambda t: tfp.distributions.Blockwise(
-                [tfp.distributions.Normal(loc=tf.zeros((tf.shape(t)[0],)), scale=0.5*tf.ones((tf.shape(t)[0],)))] * (2 * n_atoms)
+                [tfp.distributions.Normal(loc=tf.zeros((tf.shape(t)[0],)),
+                                          scale=0.5*tf.ones((tf.shape(t)[0],)))] * (2 * n_atoms - n_H_bonds)
                 + [tfp.distributions.VonMises(loc=tf.zeros((tf.shape(t)[0],)), concentration=tf.ones((tf.shape(t)[0],)))] * n_atoms)
                                                ) # Bonds and angles modeled as normal distributions, torsions as von Mises
     flow = vaemolsim.flows.RQSSplineMAF(num_blocks=3, # Three RQS flows, middle with "random" ordering
@@ -150,12 +164,12 @@ def build_model(n_atoms, hidden_dim=100):
 
     # Here, the decoder distribution is the full model (no embedding or mapping, etc.)
     model = vaemolsim.models.FlowModel(flow, latent_dist)
-    _ = model.flowed_dist.flow(tf.ones([1, n_atoms * 3])) # Build flow
+    _ = model.flowed_dist.flow(tf.ones([1, n_atoms * 3 - n_H_bonds])) # Build flow
 
     return model
 
 
-def train_model(read_dir='./', save_dir='./', save_name='sidechain'):
+def train_model(read_dir='./', save_dir='./', save_name='sidechain', constrain_H_bonds=False):
     """
     Creates and trains a model for decoding.
     """
@@ -172,7 +186,16 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain'):
     with open(bat_obj_file, 'rb') as f:
         bat_obj = pickle.load(f)
     n_atoms = len(bat_obj._torsions) # Will also be number of bonds, angles, and torsions
-    model = build_model(n_atoms)
+
+    # If masking out bonds involving hydrogens
+    if constrain_H_bonds:
+        h_inds, non_h_inds, h_bond_lengths = get_h_bond_info(bat_obj)
+        n_H_bonds = len(h_inds)
+        train_data = train_data[:, non_h_inds]
+    else:
+        n_H_bonds = 0
+
+    model = build_model(n_atoms, n_H_bonds=n_H_bonds)
 
     # Set optimizer and compile
     model.compile(tf.keras.optimizers.Adam(),
@@ -264,10 +287,15 @@ def main_train(arg_list):
     parser.add_argument('res_type', help="residue type to prepare inputs for")
     parser.add_argument('--read_dir', '-r', default='./', help="directory to read files from")
     parser.add_argument('--save_dir', '-s', default='./', help="directory to save outputs to")
+    parser.add_argument('--h_bonds', action='store_true', help='whether or not to constrain bonds with hydrogens')
 
     args = parser.parse_args(arg_list)
 
-    train_model(read_dir=args.read_dir, save_dir=args.save_dir, save_name=args.res_type)
+    train_model(read_dir=args.read_dir,
+                save_dir=args.save_dir,
+                save_name=args.res_type,
+                constrain_H_bonds=args.h_bonds,
+               )
 
     
 if __name__ == '__main__':

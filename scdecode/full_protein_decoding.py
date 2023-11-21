@@ -13,7 +13,7 @@ from openmm import app as mmapp
 
 import vaemolsim
 
-from . import data_io, model_training, unconditional, analysis_tools
+from . import data_io, coord_transforms, model_training, unconditional 
 
 
 def get_unique_res(sequence):
@@ -65,20 +65,27 @@ def gather_bat_objects(res_types, search_dir='./'):
     return bat_dict
 
 
+# Need to add arguments --include_cg and --h_bonds analagously to train_model
 def gather_models(res_types,
                   bat_dict,
                   model_dir='./',
-                  unconditional_types=['GLY', 'NPRO', 'Nterm'],
+                  include_cg_target=False,
+                  constrain_H_bonds=False,
+                  unconditional_types=['NPRO', 'Nterm'], # ['GLY', 'NPRO', 'Nterm'],
                  ):
     """
     Given a sequence and dictionary of BAT objects, loads models for every residue type.
 
     Note that residue types should match the force field used for training (AMBER ff14sb).
-    AND, they should alredy be unique.
+    AND, they should already be unique.
+
+    Also returns dictionary of info for bonds involving hydrogens.
+    (will be important for decoding and sampling... don't want to rely on model loss)
     """
 
     # Loop over unique residue types and create dictionary mapping to decoding models
     decode_dict = {}
+    h_info_dict = {}
 
     for res in res_types:
 
@@ -87,12 +94,25 @@ def gather_models(res_types,
         # Get number of atoms for this residue type based on BAT object
         n_atoms = len(bat_dict[res]._torsions) # Will also be number of bonds, angles, and torsions
        
+        # And number of H-bonds that will be constrained, along with H bond info
+        if constrain_H_bonds:
+            h_inds, non_h_inds, h_bond_lengths = coord_transforms.get_h_bond_info(bat_dict[res])
+            n_H_bonds = len(h_inds)
+        else:
+            h_inds = []
+            non_h_inds = list(range(len(bat_dict[res]._torsions)))
+            h_bond_lengths = []
+            n_H_bonds = 0
+
+        # Add to dictionary of bonds involving hydrogens
+        h_info_dict[res] = [h_inds, non_h_inds, h_bond_lengths]
+
         # Build the model depending on whether it should be unconditional or not
         if res in unconditional_types:
-            this_model = unconditional.build_model(n_atoms)
+            this_model = unconditional.build_model(n_atoms, n_H_bonds=n_H_bonds)
             build_data = tf.zeros((1, n_atoms*3), dtype=tf.float32)
         else:
-            this_model = model_training.build_model(n_atoms)
+            this_model = model_training.build_model(n_atoms, n_H_bonds=n_H_bonds)
             # Note that have 112 FG and CG bead types total (when creating one-hot encoding of type)
             # That should show up in data_io.all_ref_types
             build_data = (tf.zeros((1, 3), dtype=tf.float32),
@@ -100,9 +120,15 @@ def gather_models(res_types,
                           tf.reshape(tf.cast(tf.range(len(data_io.all_ref_types)) < 1, tf.float32), (1, 1, -1)),
                          )
     
+        # Set up right loss
+        if include_cg_target and res not in unconditional_types:
+            loss = model_training.LogProbPenalizedCGLoss(bat_dict[res], mask_H=constrain_H_bonds)
+        else:
+            loss = vaemolsim.losses.LogProbLoss()
+
         # Compile, build by passing through one sample, and load weights
         this_model.compile(tf.keras.optimizers.Adam(),
-                           loss=vaemolsim.losses.LogProbLoss(),
+                           loss=loss,
                           )
         _ = this_model(build_data)
         this_model_ckpt = '%s/%s_decoder/%s_weights.ckpt'%(model_dir, res, res)
@@ -110,7 +136,7 @@ def gather_models(res_types,
 
         decode_dict[res] = this_model
 
-    return decode_dict
+    return decode_dict, h_info_dict
 
 
 def one_hot_from_types(types):
@@ -125,7 +151,9 @@ class ProteinDecoder(object):
     Class for decoding a protein.
     """
 
-    def __init__(self, pdb_file, bat_dir='./', model_dir='./', bat_dict=None, model_dict=None):
+    def __init__(self, pdb_file, bat_dir='./', model_dir='./',
+                 bat_dict=None, model_dict=None, h_info_dict=None,
+                 include_cg=False, h_bonds=False):
         """
         Given a cleaned up PDB file, creates a class instance.
         """
@@ -160,10 +188,16 @@ class ProteinDecoder(object):
             self.bat_dict = gather_bat_objects(unique_res, search_dir=bat_dir)
         else:
             self.bat_dict = bat_dict
-        if model_dict is None:
-            self.model_dict = gather_models(unique_res, self.bat_dict, model_dir=model_dir)
+        if model_dict is None or h_info_dict is None:
+            self.model_dict, self.h_info_dict = gather_models(unique_res,
+                                                              self.bat_dict,
+                                                              model_dir=model_dir,
+                                                              include_cg_target=include_cg,
+                                                              constrain_H_bonds=h_bonds,
+                                                             )
         else:
             self.model_dict = model_dict
+            self.h_info_dict = h_info_dict
 
         # Will need structure of only CG atoms (for getting those indices specifically, etc.)
         cg_struc = self.pmd_struc[data_io.cg_atoms] # Positions of only CG atoms (without sidechain beads)
@@ -249,17 +283,17 @@ class ProteinDecoder(object):
             this_decode_names = [a.name for a in self.bat_dict[res_name]._ag if a.name not in this_root_names]
             this_decode_inds = [self.pmd_struc.view[':%i@%s'%(i + 1, a)].atoms[0].idx for a in this_decode_names]
             this_one_hot = one_hot_from_types(atom_types[this_decode_inds])
-            if res_name == 'GLY':
-                uncond_seq.append(res_name)
-                uncond_root_inds.append(this_root_inds)
-                uncond_decode_inds.append(this_decode_inds)
-                uncond_one_hot.append(this_one_hot)
-            else:
-                cond_seq.append(res_name)
-                cond_root_inds.append(this_root_inds)
-                cond_one_hot.append(this_one_hot)
-                cond_decode_inds.append(this_decode_inds)
-                cond_cg_ref_inds.append(i - len(self.sequence))
+            # if res_name == 'GLY':
+            #     uncond_seq.append(res_name)
+            #     uncond_root_inds.append(this_root_inds)
+            #     uncond_decode_inds.append(this_decode_inds)
+            #     uncond_one_hot.append(this_one_hot)
+            # else:
+            cond_seq.append(res_name)
+            cond_root_inds.append(this_root_inds)
+            cond_one_hot.append(this_one_hot)
+            cond_decode_inds.append(this_decode_inds)
+            cond_cg_ref_inds.append(i - len(self.sequence))
 
         self.uncond_root_inds = uncond_root_inds
         self.uncond_seq = uncond_seq
@@ -304,6 +338,7 @@ class ProteinDecoder(object):
         for i, res in enumerate(self.uncond_seq):
             bat = self.bat_dict[res]
             bat_input = tf.tile(tf.cast(bat.results.bat[:, 9:], tf.float32), (n_samples, 1))
+            bat_input = bat_input[:, self.h_info_dict[res][1]]
 
             # If want probabilities, cannot use predict_on_batch...
             # Need distribution, then compute log_probabilities of sample
@@ -312,10 +347,13 @@ class ProteinDecoder(object):
             prob = dist.log_prob(sample)
             decoded_probs.append(prob)
 
+            # Fill in hydrogens
+            full_bat_sample = coord_transforms.fill_in_h_bonds(sample.numpy(), *self.h_info_dict[res])
+
             # Convert BAT coordinates to xyz
-            full_bat_sample = analysis_tools.fill_in_bat(sample,
-                                                         cg_config.numpy()[:, self.uncond_root_inds[i], :])
-            sample_xyz = analysis_tools.xyz_from_bat(full_bat_sample, bat)
+            full_bat_sample = coord_transforms.fill_in_bat(full_bat_sample,
+                                                           cg_config.numpy()[:, self.uncond_root_inds[i], :])
+            sample_xyz = coord_transforms.xyz_from_bat(full_bat_sample, bat)
             # But want to exclude the root atom indices, which are already in the CG config
             sample_xyz = np.delete(sample_xyz, self.bat_dict[res]._root_XYZ_inds, axis=1)
             decoded_coords.append(tf.convert_to_tensor(sample_xyz, dtype=tf.float32))
@@ -344,10 +382,13 @@ class ProteinDecoder(object):
             prob = dist.log_prob(sample)
             decoded_probs.append(prob)
 
+            # Fill in hydrogens
+            full_bat_sample = coord_transforms.fill_in_h_bonds(sample.numpy(), *self.h_info_dict[res])
+
             # Convert BAT coordinates to xyz
-            full_bat_sample = analysis_tools.fill_in_bat(sample,
-                                                         cg_config.numpy()[:, self.cond_root_inds[i], :])
-            sample_xyz = analysis_tools.xyz_from_bat(full_bat_sample, self.bat_dict[res])
+            full_bat_sample = coord_transforms.fill_in_bat(full_bat_sample,
+                                                           cg_config.numpy()[:, self.cond_root_inds[i], :])
+            sample_xyz = coord_transforms.xyz_from_bat(full_bat_sample, self.bat_dict[res])
             # But want to exclude the root atom indices, which are already in the CG config
             sample_xyz = np.delete(sample_xyz, self.bat_dict[res]._root_XYZ_inds, axis=1)
             decoded_coords.append(tf.convert_to_tensor(sample_xyz, dtype=tf.float32))

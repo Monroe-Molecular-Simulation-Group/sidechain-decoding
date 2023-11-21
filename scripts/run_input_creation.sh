@@ -21,11 +21,11 @@ conda activate new_tf_protein_env
 datadir="/storage/jm217/data_Sidechain_Decoding"
 savedir="/scratch/${SLURM_JOB_ID}"
 
-# Excluding GLY since no real sidechain, only hydrogen
-# Also exclude caps NHE, NME, and ACE
+# Exclude caps NHE, NME, and ACE
 # And cysteines forming disulfide bonds, CYX
 # For each of those, will train custom model if decide we want/need one
-resnames=("ALA" "ARG" "ASH" "ASN" "ASP" "CYM" "CYS" "GLH" "GLN" "GLU" "HID" "HIE" "HIP" "HYP" "ILE" "LEU" "LYN" "LYS" "MET" "PHE" "PRO" "SER" "THR" "TRP" "TYR" "VAL")
+# resnames=("ALA" "ARG" "ASH" "ASN" "ASP" "CYM" "CYS" "GLH" "GLN" "GLU" "GLY" "HID" "HIE" "HIP" "HYP" "ILE" "LEU" "LYN" "LYS" "MET" "PHE" "PRO" "SER" "THR" "TRP" "TYR" "VAL")
+resnames=("GLY")
 
 for r in ${resnames[@]}
 do

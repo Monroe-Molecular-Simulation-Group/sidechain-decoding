@@ -63,7 +63,7 @@ def inputs_from_pdb(pdb_file, res_name, mod_info,
     not_bat_atom_str : str, default '@N,O,H,OXT,H1,H2,H3'
         A string following ParmEd atom selection format specifying which atoms in a residue
         will NOT be included when generating BAT coordinates. Also excludes the special
-        atoms of terminal residues.
+        atoms of terminal residues. For GLY, instead want '@N,H,OXT,H1,H2,H3'
     cg_atom_list : list, default ['N', 'CA', 'C', 'O', 'H', 'CB', 'OXT']
         A list of atom names that will be included in the "CG" representation of a protein.
     rng : object, default np.random.default_rng()
@@ -197,7 +197,10 @@ def inputs_from_pdb(pdb_file, res_name, mod_info,
         # Also need BAT coordinates for just this residue
         this_bat_atoms = struc['(:%i)&(!(%s))'%(res.idx + 1, not_bat_atom_str)]
         uni = mda.Universe(this_bat_atoms.topology, np.array(this_bat_atoms.coordinates, dtype='float32'))
-        bat_analysis = BAT(uni.select_atoms('all'), initial_atom=uni.select_atoms('name C')[0])
+        if res_name == 'GLY':
+            bat_analysis = BAT(uni.select_atoms('all'), initial_atom=uni.select_atoms('name O')[0])
+        else:
+            bat_analysis = BAT(uni.select_atoms('all'), initial_atom=uni.select_atoms('name C')[0])
         bat_analysis.run()
         this_bat = bat_analysis.results.bat[0] # Includes N, CA, and CB atom information
         full_bat.append(this_bat)
@@ -407,7 +410,7 @@ def save_dataset(refs, coords, info, targets, save_file_name):
     writer.close()
 
 
-def read_dataset(files):
+def read_dataset(files, include_cg_target=False):
     """
     Reads a TFRecord-based dataset, producing a parsed dataset.
 
@@ -417,6 +420,10 @@ def read_dataset(files):
     ----------
     files : list of str
         A list of file names to load data from.
+    include_cg_target : bool, default False
+        Whether or not to add in the CG reference as a target.
+        If this is done, the original targets are ignored and full BAT .npy files are loaded
+        as part of the targets.
 
     Returns
     -------
@@ -425,9 +432,25 @@ def read_dataset(files):
     """
     raw_dset = tf.data.TFRecordDataset(files, compression_type='GZIP')
     parsed_dset = raw_dset.map(_tf_parse_example)
-    # Also need to ensure shape of target values
-    target_shape = next(iter(parsed_dset))[1].shape
-    shaped_dset = parsed_dset.map(lambda inputs, targets: (inputs, tf.ensure_shape(targets, target_shape)))
+
+    if include_cg_target:
+        # Need to obtain all full BAT files and load in that data
+        # Assumes file naming consistent with list of files (order will matter!)
+        # (i.e., name is "something.tfrecord" and "something_full_BAT.npy")
+        full_bat_files = [f[:-9]+'_full_BAT.npy' for f in files]
+        full_bat = np.vstack([np.load(f) for f in full_bat_files])
+        full_bat_dset = tf.data.Dataset.from_tensor_slices(tf.convert_to_tensor(full_bat, dtype=tf.float32))
+        only_cg_dset = parsed_dset.map(lambda x, y: x[0])
+        inputs_dset = parsed_dset.map(lambda x, y: x)
+        target_dset = tf.data.Dataset.zip(full_bat_dset, only_cg_dset)
+        target_dset = target_dset.map(lambda x, y: tf.ensure_shape(tf.concat([x, y], axis=-1), (full_bat.shape[1] + 3,)))
+        shaped_dset = tf.data.Dataset.zip(inputs_dset, target_dset)
+    
+    else:
+        # Also need to ensure shape of target values
+        target_shape = next(iter(parsed_dset))[1].shape
+        shaped_dset = parsed_dset.map(lambda inputs, targets: (inputs, tf.ensure_shape(targets, target_shape)))
+
     return shaped_dset
 
 
@@ -461,9 +484,14 @@ def main(arg_list):
     for p in pdb_list:
         pdb_id = os.path.split(p)[-1].split('.pdb')[0]
         this_mod = mod_info[pdb_id]
+
+        if args.res_type == 'GLY':
+            this_not_bat = '@N,H,OXT,H1,H2,H3'
+        else:
+            this_not_bat = not_bat_atoms
        
         try:
-            inputs = inputs_from_pdb(p, args.res_type, this_mod, rng=rng)
+            inputs = inputs_from_pdb(p, args.res_type, this_mod, rng=rng, not_bat_atom_str=this_not_bat)
         except Exception as exc:
             print('On file %s, failed with exception:\n%s'%(p, str(exc)))
             inputs = None
