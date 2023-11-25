@@ -126,7 +126,7 @@ def inputs_from_pdb(pdb_file,
 
     # Clean up and return
     full_bat = np.array(full_bat, dtype='float32')
-    if prep_n_terminal:
+    if prep_n_terminal or (res_name == 'NPRO'):
         # Ensure residue type is N-terminal
         nterm_resname = 'N'+str(bat_analysis._ag[0].resname)
         for a in bat_analysis._ag:
