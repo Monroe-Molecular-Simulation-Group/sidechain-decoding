@@ -210,6 +210,9 @@ def inputs_from_pdb(pdb_file, res_name, mod_info,
     # Only convert full_bat to array - rest better off in list
     # That way easier to combine inputs from multiple pdbs as ragged tensors if want to
     full_bat = np.array(full_bat, dtype='float32')
+    # Ensure residue name matches force field
+    for a in bat_analysis._ag:
+        a.residue.resname = res_name
 
     return cg_inputs, coord_inputs, one_hot_inputs, full_bat, bat_targets, bat_analysis
 
