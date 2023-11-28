@@ -25,7 +25,7 @@ savedir="/scratch/${SLURM_JOB_ID}"
 # And cysteines forming disulfide bonds, CYX
 # For each of those, will train custom model if decide we want/need one
 # resnames=("ALA" "ARG" "ASH" "ASN" "ASP" "CYM" "CYS" "GLH" "GLN" "GLU" "GLY" "HID" "HIE" "HIP" "HYP" "ILE" "LEU" "LYN" "LYS" "MET" "PHE" "PRO" "SER" "THR" "TRP" "TYR" "VAL")
-resnames=("GLY")
+resnames=("ASH" "CYM" "GLH" "HID" "HIE" "HIP" "HYP" "LYN")
 
 for r in ${resnames[@]}
 do
