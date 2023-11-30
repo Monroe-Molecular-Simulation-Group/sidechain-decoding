@@ -114,8 +114,9 @@ def bat_cartesian_tf(bat_frame, bat_obj):
 
         vp = tf.linalg.cross(v32, v21)
         cs = tf.reduce_sum(v21 * v32, axis=-1, keepdims=True)
+        cs_sq = tf.math.minimum(cs * cs, 1.0) # Need so don't end up with negative in sqrt due to precision
 
-        sn = tf.math.maximum(tf.math.sqrt(1.0 - cs * cs), 0.0000000001)
+        sn = tf.math.maximum(tf.math.sqrt(1.0 - cs_sq), 0.0000000001)
         vp = vp / sn
         vu = tf.linalg.cross(vp, v21)
 

@@ -17,12 +17,24 @@ from .coord_transforms import bat_cartesian_tf, get_h_bond_info
 
 
 # Need custom loss function to help enforce CG location
+# Should separate out into two losses, on that enforces log probability and one for CG inputs
+# Both need to be aware of hydrogen bond indices in BAT coordinates, etc., just breaks this into two classes
+# But then need two model outputs and same with targets...
+# Want two things:
+#   1) Ability to ignore H bonds without this custom loss
+#   2) Ability to separately track log-prob and CG losses
+# If want to modify balance between log-prob and CG losses, should be able to adjust cg_var with custom callback
+# Separating them out is what seems tricky
+# To get ability to only ignore H bonds, could just set so if cg_var is zero, it doesn't compute that contribution
+# To handle second objective, could just store most recent separate values WITHIN THIS LOSS, then report them with a custom callback
+# Turns out cannot store values of tensors while in graph mode, which makes sense
+# So only implemented ability to turn on/off CG penalty and adjust during training
 class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
     """
     A loss to enforce mapping of output to CG coordinates in addition to log probability.
     """
 
-    def __init__(self, bat_obj, cg_var=0.25, mask_H=False, name='log_prob_cg_loss', **kwargs):
+    def __init__(self, bat_obj, one_over_cg_var=4.0, mask_H=False, name='log_prob_cg_loss', **kwargs):
         """
         Creates loss object.
 
@@ -30,8 +42,9 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
         ----------
         bat_obj : MDAnalysis BAT analysis object
             BAT analysis object defining the transformation.
-        cg_var : float, default 1.0
-            Variance for distribution of CG coordinates from reference.
+        one_over_cg_var : float, default 4.0
+            Reciprocal variance for distribution of CG coordinates from reference.
+            If set to 0.0, ignores CG penalty term.
         mask_H : bool, default False
             Whether or not to define mask over bonds involving hydrogens.
         """
@@ -40,7 +53,7 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
 
         self.bat_obj = bat_obj
 
-        self.cg_var = cg_var
+        self.one_over_cg_var = one_over_cg_var
 
         if mask_H:
             h_inds, non_h_inds, h_bond_lengths = get_h_bond_info(bat_obj)
@@ -113,9 +126,37 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
         cg_sample = tf.reduce_sum(self.mass_weights * xyz_sample, axis=1)
 
         # Assuming Gaussian distribution, enforce sampled CG close to reference
-        cg_penalty = tf.reduce_sum((cg_sample - cg_ref)**2 / (2.0 * self.cg_var), axis=-1)
+        cg_penalty = tf.reduce_sum(self.one_over_cg_var * (cg_sample - cg_ref)**2 / 2.0, axis=-1)
 
         return log_prob + cg_penalty
+
+
+class CGPenaltyAnnealing(tf.keras.callbacks.Callback):
+    """
+    Adjusts the CG penalty on a linear schedule (to be used with LogProbPenalizedCGLoss)
+    """
+
+    def __init__(self, start_epoch, end_epoch, start_val, end_val):
+        super().__init__()
+        
+        if start_epoch >= end_epoch:
+            raise ValueError('start_epoch (%i) must be smaller than end_epoch (%i)'%(start_epoch, end_epoch))
+
+        self.start_epoch = start_epoch - 1 # Counting of epochs starts at 0 but displays starting at 1
+        self.end_epoch = end_epoch - 1
+        self.start_val = start_val
+        self.end_val = end_val
+        self.rate = (end_val - start_val) / (end_epoch - start_epoch)
+
+    def on_epoch_begin(self, epoch, logs=None):
+        if epoch <= self.start_epoch:
+            this_val = self.start_val
+        elif epoch < self.end_epoch:
+            this_val = self.rate * (epoch - self.start_epoch) + self.start_val
+        else:
+            this_val  = self.end_val
+        self.model.loss.one_over_cg_var = this_val
+        print("\nEpoch %i: Set reciprocal CG penalty variance to %6.4f."%(epoch + 1, this_val))
 
 
 def build_model(n_atoms, n_H_bonds=0, embed_dim=20, hidden_dim=100):
@@ -210,6 +251,10 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_
                                                        ),
                      tf.keras.callbacks.TerminateOnNaN(),
                     ]
+
+    if include_cg_target:
+        # Current default is no annealing (same start and end value)
+        callback_list.append(CGPenaltyAnnealing(4, 7, 4.0, 4.0))
 
     # Fit the model
     history = model.fit(train_dset, epochs=10, validation_data=val_dset, verbose=2, callbacks=callback_list)
