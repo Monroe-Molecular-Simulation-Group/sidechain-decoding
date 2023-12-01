@@ -100,7 +100,7 @@ def gather_models(res_types,
             n_H_bonds = len(h_inds)
         else:
             h_inds = []
-            non_h_inds = list(range(len(bat_dict[res]._torsions)))
+            non_h_inds = list(range(len(bat_dict[res]._torsions)*3))
             h_bond_lengths = []
             n_H_bonds = 0
 

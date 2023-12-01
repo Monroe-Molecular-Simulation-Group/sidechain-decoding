@@ -17,18 +17,10 @@ from .coord_transforms import bat_cartesian_tf, get_h_bond_info
 
 
 # Need custom loss function to help enforce CG location
-# Should separate out into two losses, on that enforces log probability and one for CG inputs
-# Both need to be aware of hydrogen bond indices in BAT coordinates, etc., just breaks this into two classes
-# But then need two model outputs and same with targets...
-# Want two things:
-#   1) Ability to ignore H bonds without this custom loss
-#   2) Ability to separately track log-prob and CG losses
-# If want to modify balance between log-prob and CG losses, should be able to adjust cg_var with custom callback
-# Separating them out is what seems tricky
-# To get ability to only ignore H bonds, could just set so if cg_var is zero, it doesn't compute that contribution
-# To handle second objective, could just store most recent separate values WITHIN THIS LOSS, then report them with a custom callback
-# Turns out cannot store values of tensors while in graph mode, which makes sense
-# So only implemented ability to turn on/off CG penalty and adjust during training
+# Separating into two losses is tricky because then need two model outputs
+# With the decoder output, that results in a subtle error when running in graph mode that I couldn't fix
+# So just use this and a metric, which is a little bit of extra computation, but gives break down of loss
+# To mask hydrogen bonds WITHOUT any CG penalty, use this loss but set one_over_cg_var to zero
 class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
     """
     A loss to enforce mapping of output to CG coordinates in addition to log probability.
@@ -59,7 +51,7 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
             h_inds, non_h_inds, h_bond_lengths = get_h_bond_info(bat_obj)
         else:
             h_inds = []
-            non_h_inds = list(range(len(bat_obj._torsions)))
+            non_h_inds = list(range(len(bat_obj._torsions)*3))
             h_bond_lengths = []
         self.h_inds = h_inds
         self.non_h_inds = non_h_inds
@@ -159,6 +151,38 @@ class CGPenaltyAnnealing(tf.keras.callbacks.Callback):
         print("\nEpoch %i: Set reciprocal CG penalty variance to %6.4f."%(epoch + 1, this_val))
 
 
+class MeanLogProb(tf.keras.metrics.Metric):
+    """
+    To enable decomposition of loss, build in log-prob loss as metric.
+
+    This breaks out the log-prob component of LogProbPenalizedCGLoss.
+    """
+
+    def __init__(self, non_h_inds, name='mean_log_prob', **kwargs):
+        super(MeanLogProb, self).__init__(name=name, **kwargs)
+        self.non_h_inds = non_h_inds
+        self.log_prob_loss = self.add_weight(name='log_prob', initializer='zeros')
+        self.count = self.add_weight(name='count', initializer='zeros')
+
+    def update_state(self, targets, decoder, sample_weight=None):
+        full_bat = targets[:, :-3]
+
+        # Need to pick apart full BAT to compute log-probability correctly
+        bat = tf.gather(full_bat[:, 9:], self.non_h_inds, axis=-1)
+        log_prob_loss = -decoder.log_prob(bat)
+
+        if sample_weight is not None:
+            sample_weight = tf.broadcast_to(sample_weight, log_prob_loss.shape)
+            log_prob_loss = tf.multiply(log_prob_loss, sample_weight)
+
+        self.log_prob_loss.assign_add(tf.reduce_sum(log_prob_loss))
+
+        self.count.assign_add(tf.cast(tf.shape(targets)[0], self.dtype))
+
+    def result(self):
+        return self.log_prob_loss / self.count
+
+
 def build_model(n_atoms, n_H_bonds=0, embed_dim=20, hidden_dim=100):
     """
     Defines the model that will be used for side-chain decoding
@@ -236,10 +260,13 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_
     # Set optimizer and compile
     if include_cg_target:
         loss = LogProbPenalizedCGLoss(bat_obj, mask_H=constrain_H_bonds)
+        metrics = MeanLogProb(loss.non_h_inds)
     else:
         loss = vaemolsim.losses.LogProbLoss()
+        metrics = None
     model.compile(tf.keras.optimizers.Adam(),
                   loss=loss,
+                  metrics=metrics,
                  )
 
     # Any callbacks needed? Shouldn't really need annealing
