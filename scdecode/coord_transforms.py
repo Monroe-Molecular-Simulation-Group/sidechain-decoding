@@ -108,16 +108,18 @@ def bat_cartesian_tf(bat_frame, bat_obj):
         cs_tor = tf.math.cos(this_torsion)
 
         v21 = this_p1 - this_p2
-        v21 /= tf.math.sqrt(tf.reduce_sum(v21 * v21, axis=-1, keepdims=True))
+        v21 = tf.math.divide_no_nan(v21, tf.math.sqrt(tf.reduce_sum(v21 * v21, axis=-1, keepdims=True)))
         v32 = this_p2 - this_p3
-        v32 /= tf.math.sqrt(tf.reduce_sum(v32 * v32, axis=-1, keepdims=True))
+        v32 = tf.math.divide_no_nan(v32, tf.math.sqrt(tf.reduce_sum(v32 * v32, axis=-1, keepdims=True)))
 
         vp = tf.linalg.cross(v32, v21)
         cs = tf.reduce_sum(v21 * v32, axis=-1, keepdims=True)
         cs_sq = tf.math.minimum(cs * cs, 1.0) # Need so don't end up with negative in sqrt due to precision
 
-        sn = tf.math.maximum(tf.math.sqrt(1.0 - cs_sq), 0.0000000001)
-        vp = vp / sn
+        # sn = tf.math.maximum(tf.math.sqrt(1.0 - cs_sq), 0.0000000001)
+        # vp = vp / sn
+        sn = tf.math.sqrt(1.0 - cs_sq)
+        vp = tf.math.divide_no_nan(vp, sn)
         vu = tf.linalg.cross(vp, v21)
 
         this_coord = this_p1 + this_r01*(vu*sn_ang*cs_tor + vp*sn_ang*sn_tor - v21*cs_ang)
