@@ -281,10 +281,10 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_
 
     if include_cg_target:
         # Current default is no annealing (same start and end value)
-        callback_list.append(CGPenaltyAnnealing(4, 7, 4.0, 4.0))
+        callback_list.append(CGPenaltyAnnealing(5, 10, 4.0, 4.0))
 
     # Fit the model
-    history = model.fit(train_dset, epochs=10, validation_data=val_dset, verbose=2, callbacks=callback_list)
+    history = model.fit(train_dset, epochs=15, validation_data=val_dset, verbose=2, callbacks=callback_list)
 
     print(model.summary())
 
