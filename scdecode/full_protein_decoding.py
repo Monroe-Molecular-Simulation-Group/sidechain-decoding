@@ -212,7 +212,7 @@ class ProteinDecoder(object):
             if len(res) == 4 and res[0] == 'N' and res[1:] != 'PRO':
                 this_root_names = [a.name for a in self.bat_dict['Nterm']._root]
                 this_decode_names = [a.name for a in self.bat_dict['Nterm']._ag if a.name not in this_root_names]
-                exclude_ind = [cg_struc.view[':%i@%s'%(i + 1, a)].atoms[0].idx for a in this_decode_names if a == 'H']
+                exclude_ind = [cg_struc.view[':%i@%s'%(i + 1, a[0])].atoms[0].idx for a in this_decode_names if a == 'H1']
                 remove_Nterm_H_inds.append(exclude_ind[0])
                 
         self.remove_Nterm_H_inds = remove_Nterm_H_inds
@@ -264,7 +264,13 @@ class ProteinDecoder(object):
                     else:
                         uncond_seq.append('Nterm')
                         this_root_names = [a.name for a in self.bat_dict['Nterm']._root]
-                        this_decode_names = [a.name for a in self.bat_dict['Nterm']._ag if a.name not in this_root_names]
+                        this_decode_names = []
+                        for a in self.bat_dict['Nterm']._ag:
+                            if a.name not in this_root_names:
+                                if '1' not in a.name:
+                                    this_decode_names.append(a.name)
+                                else:
+                                    this_decode_names.append(a.name[0])
                     this_root_inds = [cg_struc.view[':%i@%s'%(i + 1, a)].atoms[0].idx for a in this_root_names]
                     uncond_root_inds.append(this_root_inds)
                     this_decode_inds = [self.pmd_struc.view[':%i@%s'%(i + 1, a)].atoms[0].idx for a in this_decode_names]
@@ -337,8 +343,8 @@ class ProteinDecoder(object):
         # Decode with unconditional models first
         for i, res in enumerate(self.uncond_seq):
             bat = self.bat_dict[res]
-            bat_input = tf.tile(tf.cast(bat.results.bat[:, 9:], tf.float32), (n_samples, 1))
-            bat_input = bat_input[:, self.h_info_dict[res][1]]
+            bat_input = bat.results.bat[:, 9:][:, self.h_info_dict[res][1]]
+            bat_input = tf.tile(tf.cast(bat_input, tf.float32), (n_samples, 1))
 
             # If want probabilities, cannot use predict_on_batch...
             # Need distribution, then compute log_probabilities of sample
@@ -353,9 +359,9 @@ class ProteinDecoder(object):
             # Convert BAT coordinates to xyz
             full_bat_sample = coord_transforms.fill_in_bat(full_bat_sample,
                                                            cg_config.numpy()[:, self.uncond_root_inds[i], :])
-            sample_xyz = coord_transforms.xyz_from_bat(full_bat_sample, bat)
+            sample_xyz = coord_transforms.bat_cartesian_tf(full_bat_sample, bat)
             # But want to exclude the root atom indices, which are already in the CG config
-            sample_xyz = np.delete(sample_xyz, self.bat_dict[res]._root_XYZ_inds, axis=1)
+            sample_xyz = np.delete(sample_xyz.numpy(), self.bat_dict[res]._root_XYZ_inds, axis=1)
             decoded_coords.append(tf.convert_to_tensor(sample_xyz, dtype=tf.float32))
             
             # Get one-hot encoding for this set of decoded atoms
@@ -388,9 +394,9 @@ class ProteinDecoder(object):
             # Convert BAT coordinates to xyz
             full_bat_sample = coord_transforms.fill_in_bat(full_bat_sample,
                                                            cg_config.numpy()[:, self.cond_root_inds[i], :])
-            sample_xyz = coord_transforms.xyz_from_bat(full_bat_sample, self.bat_dict[res])
+            sample_xyz = coord_transforms.bat_cartesian_tf(full_bat_sample, self.bat_dict[res])
             # But want to exclude the root atom indices, which are already in the CG config
-            sample_xyz = np.delete(sample_xyz, self.bat_dict[res]._root_XYZ_inds, axis=1)
+            sample_xyz = np.delete(sample_xyz.numpy(), self.bat_dict[res]._root_XYZ_inds, axis=1)
             decoded_coords.append(tf.convert_to_tensor(sample_xyz, dtype=tf.float32))
 
             # Get one-hot encoding for this set of decoded atoms
