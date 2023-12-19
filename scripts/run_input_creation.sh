@@ -15,6 +15,7 @@ cd $SLURM_SUBMIT_DIR
 module purge
 module load gcc/11.2.1
 module load mkl/19.0.5
+module load nvhpc/22.7
 module load python/3.12-anaconda
 conda activate new_tf_protein_env
 

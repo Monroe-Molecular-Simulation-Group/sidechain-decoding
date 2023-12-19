@@ -273,7 +273,7 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_
     callback_list = [tf.keras.callbacks.ModelCheckpoint(os.path.join(save_dir, '%s_decoder'%save_name, '%s_weights.ckpt'%save_name),
                                                         monitor='val_loss',
                                                         mode='min',
-                                                        save_best_only=True,
+                                                        save_best_only=False, # If annealing CG penalty, set to False
                                                         save_weights_only=True
                                                        ),
                      tf.keras.callbacks.TerminateOnNaN(),
@@ -281,7 +281,7 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_
 
     if include_cg_target:
         # Current default is no annealing (same start and end value)
-        callback_list.append(CGPenaltyAnnealing(5, 10, 4.0, 4.0))
+        callback_list.append(CGPenaltyAnnealing(5, 15, 0.0, 4.0))
 
     # Fit the model
     history = model.fit(train_dset, epochs=15, validation_data=val_dset, verbose=2, callbacks=callback_list)
