@@ -45,7 +45,7 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
 
         self.bat_obj = bat_obj
 
-        self.one_over_cg_var = one_over_cg_var
+        self.one_over_cg_var = tf.Variable(one_over_cg_var, trainable=False)
 
         if mask_H:
             h_inds, non_h_inds, h_bond_lengths = get_h_bond_info(bat_obj)
@@ -119,6 +119,8 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
 
         # Assuming Gaussian distribution, enforce sampled CG close to reference
         cg_penalty = tf.reduce_sum(self.one_over_cg_var * (cg_sample - cg_ref)**2 / 2.0, axis=-1)
+        # Or try a Laplace distribution instead
+        # cg_penalty = tf.reduce_sum(self.one_over_cg_var * tf.math.abs(cg_sample - cg_ref), axis=-1)
 
         return log_prob + cg_penalty
 
@@ -147,7 +149,7 @@ class CGPenaltyAnnealing(tf.keras.callbacks.Callback):
             this_val = self.rate * (epoch - self.start_epoch) + self.start_val
         else:
             this_val  = self.end_val
-        self.model.loss.one_over_cg_var = this_val
+        self.model.loss.one_over_cg_var.assign(this_val)
         print("\nEpoch %i: Set reciprocal CG penalty variance to %6.4f."%(epoch + 1, this_val))
 
 
@@ -281,7 +283,7 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_
 
     if include_cg_target:
         # Current default is no annealing (same start and end value)
-        callback_list.append(CGPenaltyAnnealing(5, 15, 0.0, 4.0))
+        callback_list.append(CGPenaltyAnnealing(5, 10, 0.0, 0.0))
 
     # Fit the model
     history = model.fit(train_dset, epochs=15, validation_data=val_dset, verbose=2, callbacks=callback_list)
