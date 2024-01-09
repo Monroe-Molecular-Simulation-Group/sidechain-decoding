@@ -7,10 +7,10 @@ savedir="${HOME}/Sidechain_Decoding/energy_min_training_inputs"
 
 # Training special case residues - GLY, N-terminal hydrogens, and NPRO
 # All will be trained without conditioning on local environment
-# Can do GLY, but in end made conditional since does have CG bead and BAT analysis objects have trouble with it
+# Note that have also tried conditional version of glycine
 
 # GLY
-# python -m scdecode.unconditional gen_input ${datadir}/residue_modifications.json GLY -r ${datadir} -s ${savedir}/GLY > gen_inputs_GLY.out 2>&1
+python -m scdecode.unconditional gen_input ${datadir}/residue_modifications.json GLY -r ${datadir} -s ${savedir}/GLY > gen_inputs_GLY.out 2>&1
 
 # N-terminal
 python -m scdecode.unconditional gen_input ${datadir}/residue_modifications.json Nterm -r ${datadir} -s ${savedir}/Nterm --n_terminal > gen_inputs_Nterm.out 2>&1

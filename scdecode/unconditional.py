@@ -24,7 +24,7 @@ from .coord_transforms import get_h_bond_info
 def inputs_from_pdb(pdb_file,
                     mod_info,
                     res_name='GLY',
-                    bat_atom_str='O,C,CA,HA2,HA3',
+                    bat_atom_str='N,C,CA,HA2,HA3',
                     prep_n_terminal=False
                    ):
     """
@@ -50,7 +50,7 @@ def inputs_from_pdb(pdb_file,
         training inputs, even if they are glycines.
     res_name : str, default 'GLY'
         Name of residue to prepare inputs for.
-    bat_atom_str : str, defualt '@O,C,CA,HA2,HA3'
+    bat_atom_str : str, defualt '@N,C,CA,HA2,HA3'
         Atoms within the residue to consider for BAT analysis. Note this is inclusive,
         not exclusive.
     prep_n_terminal : boolean, default False
@@ -119,6 +119,11 @@ def inputs_from_pdb(pdb_file,
     
         this_bat_atoms = struc['(:%s)&(%s)'%(res_num, bat_atom_str)]
         uni = mda.Universe(this_bat_atoms.topology, np.array(this_bat_atoms.coordinates, dtype='float32'))
+        if res_name == 'GLY':
+            # If working with GLY, want dihedrals to be computed from plane of C, CA, and N
+            # To make this work with MDAnalysis BAT analysis, need to rearrange bonds (it's a hack)
+            uni.add_bonds([uni.select_atoms('name N or name C')])
+            uni.delete_bonds([uni.select_atoms('name N or name CA')])
         bat_analysis = BAT(uni.select_atoms('all'))
         bat_analysis.run()
         this_bat = bat_analysis.results.bat[0] 
@@ -234,7 +239,7 @@ def main_gen_input(arg_list):
     parser.add_argument('res_type', help="residue type to prepare inputs for")
     parser.add_argument('--read_dir', '-r', default='./', help="directory to read files from")
     parser.add_argument('--save_dir', '-s', default='./', help="directory to save outputs to")
-    parser.add_argument('--bat_atom_str', default='@O,C,CA,HA2,HA3', help="selection string for BAT analysis atoms")
+    parser.add_argument('--bat_atom_str', default='@N,C,CA,HA2,HA3', help="selection string for BAT analysis atoms")
     parser.add_argument('--n_terminal', action='store_true', help="if specified, handles special case of N-terminal residues")
 
     args = parser.parse_args(arg_list)

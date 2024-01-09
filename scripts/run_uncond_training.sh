@@ -9,7 +9,7 @@ datadir="${HOME}/Sidechain_Decoding/energy_min_training_inputs"
 # GLY can be handled conditionally as well
 
 # GLY
-# python -m scdecode.unconditional train GLY -r ${datadir}/GLY -s ./ --h_bonds > train_GLY.out 2>&1
+python -m scdecode.unconditional train GLY -r ${datadir}/GLY -s ./ --h_bonds > train_GLY.out 2>&1
 
 # N-terminal
 python -m scdecode.unconditional train Nterm -r ${datadir}/Nterm -s ./ --h_bonds > train_Nterm.out 2>&1

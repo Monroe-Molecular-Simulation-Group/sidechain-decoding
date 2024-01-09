@@ -71,7 +71,7 @@ def gather_models(res_types,
                   model_dir='./',
                   include_cg_target=False,
                   constrain_H_bonds=False,
-                  unconditional_types=['NPRO', 'Nterm'], # ['GLY', 'NPRO', 'Nterm'],
+                  unconditional_types=['GLY', 'NPRO', 'Nterm'], # ['NPRO', 'Nterm'],
                  ):
     """
     Given a sequence and dictionary of BAT objects, loads models for every residue type.
@@ -289,17 +289,17 @@ class ProteinDecoder(object):
             this_decode_names = [a.name for a in self.bat_dict[res_name]._ag if a.name not in this_root_names]
             this_decode_inds = [self.pmd_struc.view[':%i@%s'%(i + 1, a)].atoms[0].idx for a in this_decode_names]
             this_one_hot = one_hot_from_types(atom_types[this_decode_inds])
-            # if res_name == 'GLY':
-            #     uncond_seq.append(res_name)
-            #     uncond_root_inds.append(this_root_inds)
-            #     uncond_decode_inds.append(this_decode_inds)
-            #     uncond_one_hot.append(this_one_hot)
-            # else:
-            cond_seq.append(res_name)
-            cond_root_inds.append(this_root_inds)
-            cond_one_hot.append(this_one_hot)
-            cond_decode_inds.append(this_decode_inds)
-            cond_cg_ref_inds.append(i - len(self.sequence))
+            if res_name == 'GLY':
+                uncond_seq.append(res_name)
+                uncond_root_inds.append(this_root_inds)
+                uncond_decode_inds.append(this_decode_inds)
+                uncond_one_hot.append(this_one_hot)
+            else:
+                cond_seq.append(res_name)
+                cond_root_inds.append(this_root_inds)
+                cond_one_hot.append(this_one_hot)
+                cond_decode_inds.append(this_decode_inds)
+                cond_cg_ref_inds.append(i - len(self.sequence))
 
         self.uncond_root_inds = uncond_root_inds
         self.uncond_seq = uncond_seq
