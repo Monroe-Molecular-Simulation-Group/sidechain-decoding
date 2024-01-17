@@ -311,6 +311,10 @@ class ProteinDecoder(object):
         self.cond_one_hot = cond_one_hot
         self.cond_cg_ref_inds = cond_cg_ref_inds
 
+        # Need way to sort decoded indices back to order that is expected by protein structure
+        self.full_decode_inds = np.hstack([self.cg_inds,] + self.uncond_decode_inds + self.cond_decode_inds)
+        self.sort_inds = np.argsort(self.full_decode_inds)
+
     def decode_config(self, cg_config, n_samples=1):
         """
         Given a CG configuration of shape (N_particles, 3), decodes to atomistic.
@@ -404,9 +408,7 @@ class ProteinDecoder(object):
             decoded_one_hot.append(one_hot)
 
         # Finally, need to stitch the configuration back together
-        decode_inds = np.hstack([self.cg_inds,] + self.uncond_decode_inds + self.cond_decode_inds)
-        sort_inds = np.argsort(decode_inds)
-        decoded_configs = tf.concat([cg_config[:, :-len(self.sequence), :]] + decoded_coords, axis=1).numpy()[:, sort_inds, :]
+        decoded_configs = tf.concat([cg_config[:, :-len(self.sequence), :]] + decoded_coords, axis=1).numpy()[:, self.sort_inds, :]
 
         # Sum over log probabilities (for each decoding model)
         decoded_probs = np.array(decoded_probs)
