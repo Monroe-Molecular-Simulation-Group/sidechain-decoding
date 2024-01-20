@@ -146,7 +146,7 @@ def one_hot_from_types(types):
     return one_hot
 
 
-class ProteinDecoder(object):
+class ProteinDecoder(tf.Module):
     """
     Class for decoding a protein.
     """
@@ -325,29 +325,29 @@ class ProteinDecoder(object):
         for key, val in self.bat_dict.items():
             self.bat_non_root_inds[key] = np.delete(np.arange(len(val.atoms)), val._root_XYZ_inds)
 
+    # input_signature helps prevent retracing of graph
+    # (even for numpy inputs, it seems - to be safe, maybe pass in tensors instead)
+    # Actually know the shape of the second dimension as self.one_hot_cg.shape[0]
+    # However, cannot access self in the tf.function decorator call
+    # So just ensure the shape is correct within the function
+    # To parallelize sample generation, tile the input configuration before passing
+    # That way, flexibly allows different configurations or the same configuration repeated multiple times
+    @tf.function(input_signature=(tf.TensorSpec(shape=[None, None, 3], dtype=tf.float32),))
     def decode_config(self, cg_config):
         """
         Given CG configuration(s) of shape (N_frames, N_particles, 3), decodes to atomistic.
         Should consist of all atomistic "CG" coordinates (i.e., the backbone-ish) plus the
         sidechain beads, in that order so that it matches up with self.one_hot_cg.
         """
-
         # Prep configuration by removing N-terminal H hydrogens
         cg_config = tf.gather(tf.cast(cg_config, tf.float32), self.cg_non_Nterm_H_inds, axis=1)
 
         # Check shape of configuration
-        input_shape = tf.shape(cg_config)
-        if input_shape[1] != self.one_hot_cg.shape[0]:
-            raise ValueError('Number of particles (second dimension) in input configuration (%s)'
-                             'must match structures used for initialization (%s).'%(str(input_shape[1]),
-                                                                                    str(self.one_hot_cg.shape[0])))
+        cg_config = tf.ensure_shape(cg_config, [None, self.one_hot_cg.shape[0], 3])
+        batch_shape = tf.shape(cg_config)[0]
 
-        # Parallelize sample generation by making copies of the CG configuration.
-        # Should move outside of this function...
-        # If move outside, will work equally well for generating extra samples or for multiple configurations
-        # cg_config = tf.tile(tf.expand_dims(tf.cast(cg_config, tf.float32), axis=0), (n_samples, 1, 1))
         # Need to tile the one-hot indicators to match the input cg configuration
-        cg_one_hot = tf.tile(tf.expand_dims(tf.cast(self.one_hot_cg, tf.float32), axis=0), (input_shape[0], 1, 1))
+        cg_one_hot = tf.tile(tf.expand_dims(tf.cast(self.one_hot_cg, tf.float32), axis=0), (batch_shape, 1, 1))
 
         # Will loop over the residues and decode each
         # Can keep track of decoded positions in a list to concatenate with the CG config at each pass
@@ -359,20 +359,23 @@ class ProteinDecoder(object):
         decoded_one_hot = tf.TensorArray(tf.float32, size=0, dynamic_size=True,
                                          clear_after_read=False, infer_shape=False)
         decoded_probs = tf.TensorArray(tf.float32, size=(self.num_uncond + self.num_cond),
-                                       clear_after_read=False, infer_shape=False)
+                                       clear_after_read=False, infer_shape=True)
 
         # Decode with unconditional models first
         for i, res in enumerate(self.uncond_seq):
+            # Could move below outside loop and save something like self.bat_input as dictionary of tf.Tensor objects
             bat = self.bat_dict[res]
             bat_input = bat.results.bat[:, 9:][:, self.h_info_dict[res][1]]
-            bat_input = tf.tile(tf.cast(bat_input, tf.float32), (input_shape[0], 1))
+            bat_input = tf.tile(tf.cast(bat_input, tf.float32), (batch_shape, 1))
 
             # If want probabilities, cannot use predict_on_batch...
             # Need distribution, then compute log_probabilities of sample
             dist = self.model_dict[res](bat_input)
             sample = dist.sample()
             prob = dist.log_prob(sample)
-            decoded_probs.write(i, prob).mark_used()
+            # Note that writing to TensorArray objects works by assigning to themselves
+            # Doing this ensures functioning in graph mode and prevents errors in eager mode
+            decoded_probs = decoded_probs.write(i, prob)
 
             # Fill in hydrogens (with tensorflow ops)
             full_bat_sample = coord_transforms.fill_in_h_bonds_tf(sample, *self.h_info_dict[res])
@@ -385,21 +388,24 @@ class ProteinDecoder(object):
             sample_xyz = tf.gather(sample_xyz, self.bat_non_root_inds[res], axis=1)
             # Write to TensorArray, but must transpose so .concat works!
             # Means each entry in decoded_coords will be (n_atoms, n_confs, 3)
-            decoded_coords.write(i, tf.transpose(sample_xyz, perm=[1, 0, 2])).mark_used()
+            decoded_coords = decoded_coords.write(i, tf.transpose(sample_xyz, perm=[1, 0, 2]))
             
             # Get one-hot encoding for this set of decoded atoms
-            one_hot = tf.tile(tf.expand_dims(tf.cast(self.uncond_one_hot[i], tf.float32), axis=0), (input_shape[0], 1, 1))
-            decoded_one_hot.write(i, tf.transpose(one_hot, perm=[1, 0, 2])).mark_used()
+            one_hot = tf.tile(tf.expand_dims(tf.cast(self.uncond_one_hot[i], tf.float32), axis=0), (batch_shape, 1, 1))
+            decoded_one_hot = decoded_one_hot.write(i, tf.transpose(one_hot, perm=[1, 0, 2]))
 
         # Decode conditional models
         for i, res in enumerate(self.cond_seq):
             
             # Add coordinates and one-hot encodings decoded up to this point to CG configuration
             if decoded_coords.size() != 0:
-                this_config = tf.transpose(decoded_coords.concat(), perm=[1, 0, 2])
-                this_config = tf.concat([cg_config, this_config], axis=1)
-                this_one_hot = tf.transpose(decoded_one_hot.concat(), perm=[1, 0, 2])
-                this_one_hot = tf.concat([cg_one_hot, this_one_hot], axis=1)
+                current_decoded = tf.transpose(decoded_coords.concat(), perm=[1, 0, 2])
+                this_config = tf.concat([cg_config, current_decoded], axis=1)
+                current_one_hot = tf.transpose(decoded_one_hot.concat(), perm=[1, 0, 2])
+                this_one_hot = tf.concat([cg_one_hot, current_one_hot], axis=1)
+            else:
+                this_config = cg_config
+                this_one_hot = cg_one_hot
 
             # Grab reference sidechain location to decode
             this_ref = cg_config[:, self.cond_cg_ref_inds[i], :]
@@ -411,7 +417,7 @@ class ProteinDecoder(object):
             dist = self.model_dict[res](this_input)
             sample = dist.sample()
             prob = dist.log_prob(sample)
-            decoded_probs.write(i + self.num_uncond, prob).mark_used()
+            decoded_probs = decoded_probs.write(i + self.num_uncond, prob)
 
             # Fill in hydrogens
             full_bat_sample = coord_transforms.fill_in_h_bonds_tf(sample, *self.h_info_dict[res])
@@ -422,11 +428,11 @@ class ProteinDecoder(object):
             sample_xyz = coord_transforms.bat_cartesian_tf(full_bat_sample, self.bat_dict[res])
             # But want to exclude the root atom indices, which are already in the CG config
             sample_xyz = tf.gather(sample_xyz, self.bat_non_root_inds[res], axis=1)
-            decoded_coords.write(i + self.num_uncond, tf.transpose(sample_xyz, perm=[1, 0, 2])).mark_used()
+            decoded_coords = decoded_coords.write(i + self.num_uncond, tf.transpose(sample_xyz, perm=[1, 0, 2]))
 
             # Get one-hot encoding for this set of decoded atoms
-            one_hot = tf.tile(tf.expand_dims(tf.cast(self.cond_one_hot[i], tf.float32), axis=0), (input_shape[0], 1, 1))
-            decoded_one_hot.write(i + self.num_uncond, tf.transpose(one_hot, perm=[1, 0, 2])).mark_used()
+            one_hot = tf.tile(tf.expand_dims(tf.cast(self.cond_one_hot[i], tf.float32), axis=0), (batch_shape, 1, 1))
+            decoded_one_hot = decoded_one_hot.write(i + self.num_uncond, tf.transpose(one_hot, perm=[1, 0, 2]))
 
         # Finally, need to stitch the configuration back together
         decoded_coords_tensor = tf.transpose(decoded_coords.concat(), perm=[1, 0, 2])
