@@ -280,3 +280,31 @@ def fill_in_h_bonds(partial_bat, h_inds, non_h_inds, h_bond_lengths):
     filled_bat[:, non_h_inds] = partial_bat
     return filled_bat
 
+
+def fill_in_h_bonds_tf(partial_bat, h_inds, non_h_inds, h_bond_lengths): 
+    """
+    Fills in values of bonds involving hydrogens given other BAT coordinates, but uses TensorFlow.
+
+    Parameters
+    ----------
+    partial_bat : tf.Tensor
+        BAT set not including bonds with hydrogens
+    h_inds : list
+        Indices in complete BAT coordinates where have bonds involving hydrogens
+    non_h_inds : list
+        Indices of BAT coordinates not involving bonds with hydrogens
+    h_bond_lengths : list
+        Bond lengths corresponding to bonds involving hydrogens specified in h_inds
+
+    Returns
+    -------
+    filled_bat : tf.Tensor
+        Tensor of full BAT coordinates with bonds involving hydrogens filled in
+    """
+    input_shape = tf.shape(partial_bat)
+    h_bond_vals = tf.tile(tf.reshape(h_bond_lengths, (1, -1)), (input_shape[0], 1))
+    filled_bat = tf.dynamic_stitch([h_inds, non_h_inds],
+                                   [tf.transpose(h_bond_vals), tf.transpose(partial_bat)])
+    filled_bat = tf.transpose(filled_bat)
+    return filled_bat
+
