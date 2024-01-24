@@ -98,16 +98,19 @@ def config_energy(coords, sim_obj, compute_forces=False, constrain_H_bonds=False
         return state.getPotentialEnergy().value_in_unit(mm.unit.kilojoules_per_mole)
 
 
-def sim_from_pdb(pdb_file):
+def sim_from_pdb(pdb_file, implicit_solvent=True):
     """
     Creates an OpenMM simulation object from a pdb file.
     Also returns pdb object.
     """
     pdb = mm.app.PDBFile(pdb_file)
-    forcefield = data_io.ff
+    forcefield = data_io.ff # Should be AMBER ff14sb
+    if implicit_solvent:
+        forcefield.loadFile('implicit/gbn2.xml') # igb8
     system = forcefield.createSystem(pdb.topology,
-                                     nonbondedMethod=mm.app.NoCutoff)
-    integrator = mm.LangevinIntegrator(300*mm.unit.kelvin, 1/mm.unit.picosecond, 0.004*mm.unit.picoseconds)
+                                     nonbondedMethod=mm.app.NoCutoff,
+                                     constrains=HBonds)
+    integrator = mm.LangevinIntegrator(300*mm.unit.kelvin, 1/mm.unit.picosecond, 0.002*mm.unit.picoseconds)
     simulation = mm.app.Simulation(pdb.topology, system, integrator)
     simulation.context.setPositions(pdb.positions)
     return pdb, simulation
