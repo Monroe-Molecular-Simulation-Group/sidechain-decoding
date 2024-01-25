@@ -10,19 +10,28 @@ import parmed as pmd
 from scdecode import data_io
 
 
-def protein_sim(pdb_file, implicit_solvent=True, restrain_cg=False, T=300.0, n_steps=10000):
+def protein_sim(pdb_file,
+                implicit_solvent=True,
+                restrain_cg=False,
+                tempering=False,
+                T=300.0,
+                n_steps=10000000):
     """
     Runs simulation in implicit solvent (or vacuum).
     If restrain_cg is True, restrains the CG atoms (mostly backbone).
     Note that will NOT energy minimize before simulating!
+    If tempering is true, the simulated tempering will be performed.
+    In this case, production will be after a simulated tempering equilibration period
+    where weights on temperatures will be updated to enforce flat-histogram sampling.
+    Once equilibrated, weights will be fixed for the production run.
     """
     forcefield = data_io.ff
     
     # Get prefix for output files
-    out_name = pdb_file.split('.pdb')[0]
+    out_name = pdb_file.split('.pdb')[0].split('/')[-1]
 
     if implicit_solvent:
-        print("Using implicit solvent (gbn2 or igb8).")
+        print("\nUsing implicit solvent (gbn2 or igb8).")
         forcefield.loadFile('implicit/gbn2.xml') # AMBER igb8
 
     pdb = mmapp.PDBFile(pdb_file)
@@ -65,8 +74,33 @@ def protein_sim(pdb_file, implicit_solvent=True, restrain_cg=False, T=300.0, n_s
     sim = mmapp.Simulation(pdb.topology, system, integrator)
     sim.context.setPositions(pdb.positions)
 
+    # Check for simulated tempering and adjust equilibration if needed
+    if tempering:
+        out_name = out_name + '_tempered'
+        equil_time = 100.0 * mm.unit.nanosecond
+        sim_wrapper = mm.app.SimulatedTempering(sim,
+                                                numTemperatures=15,
+                                                minTemperature=T*mm.unit.kelvin,
+                                                maxTemperature=(T+150.0)*mm.unit.kelvin,
+                                                reportInterval=write_freq,
+                                                reportFile='%s_tempering_info.out'%out_name)
+    else:
+        equil_time = 1.0 * mm.unit.nanosecond
+        sim_wrapper = sim
+
     # Assume energy already minimized (at least in vacuum)
     # Proceed to simulation
+    # Run equilibration (without reporting) for 1 ns
+    equil_steps = int(equil_time / time_step)
+    print("\nEquilibrating for %s or %i steps."%(str(equil_time), equil_steps))
+    sim_wrapper.step(equil_steps)
+    print("Done with equilibration.\n\n")
+
+    # If tempering, turn off weight updates
+    if tempering:
+        sim_wrapper._updateWeights = False
+
+    # Add reporters and run production
     # Note that the reporters here will report energies with the restraint energy included
     # We will want to recompute the energies of just saved configurations without a restraint
     # (with an energy decomposition, possibly) after the simulation is done
@@ -86,7 +120,7 @@ def protein_sim(pdb_file, implicit_solvent=True, restrain_cg=False, T=300.0, n_s
                                                              frcs=True,
                                                             )
                          )
-    sim.step(n_steps)
+    sim_wrapper.step(n_steps)
 
 
 def main(arg_list):
@@ -94,16 +128,18 @@ def main(arg_list):
                                      description='Runs simulation of a protein (implicit solvent)',
                                     )
     parser.add_argument('pdb_file', help='name of pdb file of starting configuration')
-    parser.add_argument('--num_steps', '-n', type=int, default=10000, help='number of timesteps for simulation to run')
+    parser.add_argument('--num_steps', '-n', type=int, default=10000000, help='number of timesteps for simulation to run')
     parser.add_argument('--no_implicit', action='store_false', help='turns off implicit solvent to just simulate in vacuum') 
     parser.add_argument('--restrain', action='store_true', help='whether or not to restrain the CG atoms (mostly backbone)')
+    parser.add_argument('--tempering', action='store_true', help='whether or not to perform simulated tempering to enhance sampling')
 
     args = parser.parse_args(arg_list)
 
     protein_sim(args.pdb_file,
                 n_steps=args.num_steps,
-                implicit_solvent=args.no_implicit, # Default true, if set, will be false
+                implicit_solvent=args.no_implicit, # Default true; if set, will be false
                 restrain_cg=args.restrain, # Default false, so turns on if set
+                tempering=args.tempering, # Default false, so turns on if set
                )
 
 
