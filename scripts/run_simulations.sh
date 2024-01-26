@@ -17,10 +17,8 @@ module load nvhpc/22.7
 module load python/3.12-anaconda
 conda activate new_tf_protein_env
 
-pdbfile="/storage/jm217/data_Sidechain_Decoding/simulations/1UAO.pdb"
-
 export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:$LD_LIBRARY_PATH
 
-python ~/bin/sidechain-decoding/simulations/openmm_sims.py $pdbfile -n 500000000 --restrain --tempering
+python ~/bin/sidechain-decoding/simulations/openmm_sims.py ~/Sidechain_Decoding/simulations/1UAO.pdb -n 500000000 --restrain --tempering
 
 echo "Ended at time $(date)"

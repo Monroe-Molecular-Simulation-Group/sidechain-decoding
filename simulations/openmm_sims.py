@@ -77,11 +77,12 @@ def protein_sim(pdb_file,
     # Check for simulated tempering and adjust equilibration if needed
     if tempering:
         out_name = out_name + '_tempered'
-        equil_time = 100.0 * mm.unit.nanosecond
+        equil_time = 1.0 * mm.unit.nanosecond
         sim_wrapper = mm.app.SimulatedTempering(sim,
                                                 numTemperatures=15,
                                                 minTemperature=T*mm.unit.kelvin,
                                                 maxTemperature=(T+150.0)*mm.unit.kelvin,
+                                                tempChangeInterval=100,
                                                 reportInterval=write_freq,
                                                 reportFile='%s_tempering_info.out'%out_name)
     else:
@@ -99,6 +100,7 @@ def protein_sim(pdb_file,
     # If tempering, turn off weight updates
     if tempering:
         sim_wrapper._updateWeights = False
+        sim_wrapper.tempChangeInterval=500
 
     # Add reporters and run production
     # Note that the reporters here will report energies with the restraint energy included
