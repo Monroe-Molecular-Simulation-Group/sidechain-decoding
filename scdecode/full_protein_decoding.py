@@ -11,6 +11,7 @@ import tensorflow as tf
 
 import parmed as pmd
 import MDAnalysis as mda
+import openmm as mm
 from openmm import app as mmapp
 
 import vaemolsim
@@ -463,22 +464,28 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
                                  h_bonds=True,
                                 )
 
-    # Load in the pdb file and trajectory to get coordinates from
-    uni = mda.Universe(pdb_file, traj_file)
-
     # Create an OpenMM simulation object
-    _, sim = analysis_tools.sim_from_pdb(pdb_file)
+    pdb_obj, sim = analysis_tools.sim_from_pdb(pdb_file)
     
+    # Helpful to have ParmEd structure
+    pmd_struc = pmd.openmm.load_topology(pdb_obj.topology, system=sim.system, xyz=pdb_obj.positions)
+
+    # Load in the trajectory to get coordinates from
+    uni = mda.Universe(pmd_struc.topology, traj_file)
+
     # Get atom indices for every residue
     res_atom_inds = []
     for res in uni.residues:
         this_inds = [a.ix for a in res.atoms]
         res_atom_inds.append(this_inds)
 
+    print("\nDone with prep.")
+
     # Compute all energies and forces of simulated trajectory
     # For forces, store max force in each residue
     sim_energies = []
     sim_forces = []
+    sim_decomp = {}
     for frame in uni.trajectory:
         this_energy, this_forces = analysis_tools.config_energy(frame.positions,
                                                                 sim,
@@ -489,12 +496,28 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
         this_force_mags = np.linalg.norm(this_forces, axis=-1)
         this_max_f = [np.max(this_force_mags[inds]) for inds in res_atom_inds]
         sim_forces.append(this_max_f)
+        # Add energy decomposition as well
+        pmd_struc.coordinates = frame.positions
+        this_decomp = pmd.openmm.energy_decomposition_system(pmd_struc, sim.system, nrg=mm.unit.kilojoules_per_mole)
+        for key, eng in this_decomp:
+            if key in sim_decomp:
+                sim_decomp[key].append(eng)
+            else:
+                sim_decomp[key] = [eng]
 
     sim_energies = np.array(sim_energies)
     sim_forces = np.array(sim_forces)
+    out_sim_decomp = {}
+    for key, eng in sim_decomp.items():
+        out_sim_decomp['sim_'+key] = np.array(eng)
+    out_sim_decomp.pop('sim_CMMotionRemover', None)
+
+    print("\nSimulation energies computed. Working with decoding.")
 
     # Generate a CG trajectory from the all-atom one
     cg_traj = analysis_tools.map_to_cg_configs(uni)
+
+    print("\nGenerated CG trajectory from all-atom simulation trajectory.")
 
     # Generate a decoded trajectory with n_samples per frame
     cg_traj = np.tile(cg_traj, (n_samples, 1, 1))
@@ -509,9 +532,12 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
     decoded_traj = np.concatenate(decoded_traj, axis=0)
     decoded_probs = np.concatenate(decoded_probs, axis=0)
 
+    print("\nDecoding complete. Calculating energies of decoded configurations.")
+
     # Obtain energies and max forces for the decoded trajectory
     decoded_energies = []
     decoded_forces = []
+    decoded_decomp = {}
     for config in decoded_traj:
         this_energy, this_forces = analysis_tools.config_energy(config,
                                                                 sim,
@@ -522,9 +548,23 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
         this_force_mags = np.linalg.norm(this_forces, axis=-1)
         this_max_f = [np.max(this_force_mags[inds]) for inds in res_atom_inds]
         decoded_forces.append(this_max_f)
+        # Add energy decomposition as well
+        pmd_struc.coordinates = config
+        this_decomp = pmd.openmm.energy_decomposition_system(pmd_struc, sim.system, nrg=mm.unit.kilojoules_per_mole)
+        for key, eng in this_decomp:
+            if key in decoded_decomp:
+                decoded_decomp[key].append(eng)
+            else:
+                decoded_decomp[key] = [eng]
 
     decoded_energies = np.array(decoded_energies)
-    decoded_forces = np.array(decoded_forces) 
+    decoded_forces = np.array(decoded_forces)
+    out_decoded_decomp = {}
+    for key, eng in decoded_decomp.items():
+        out_decoded_decomp['decoded_'+key] = np.array(eng)
+    out_decoded_decomp.pop('decoded_CMMotionRemover', None)
+
+    print("\nDecoded energies computed. Saving.")
 
     # Save everything as npz file
     # To do that nicely, want forces as both arrays and dictionaries categorized by residue type
@@ -541,16 +581,49 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
 
     # Actually save
     np.savez('energy_analysis_%s.npz'%out_name,
-             sim_energies=sim_energies,
-             decoded_energies=decoded_energies,
-             sim_max_forces=sim_forces,
-             decoded_max_forces=decoded_forces,
+             sim_energy=sim_energies,
+             decoded_energy=decoded_energies,
+             sim_max_force=sim_forces,
+             decoded_max_force=decoded_forces,
              decoded_probs=decoded_probs,
+             **out_sim_decomp,
+             **out_decoded_decomp,
              **res_force_dict,
             )
 
-    # ADD ANALYSIS COMPARING BAT COORDINATE DISTRIBUTIONS!
-    # ALSO CONSIDER ADDING ENERGY DECOMPOSITION
+    print("\nPerforming BAT distribution analysis on sidechain of each residue.")
+
+    # Also want to compare distributions of BAT coordinates between original trajectory and decoded structures
+    # Loop over each residue type, skipping GLY, and compute BAT coordinates with MDAnalysis BAT object
+    # Start with simulation trajectory
+    # Annoyingly, the MDAnalysis BAT analysis cannot handle pulling a selection from a Universe without modifying bonds
+    # (unlike ParmEd, bonds are not dropped when atoms are excluded)
+    # So need to use ParmEd to select out the atoms, then still use MDAnalysis to extract specific coordinates
+    for i, res_type in enumerate(full_decode.sequence):
+        if 'GLY' in res_type:
+            continue
+        this_bat_atoms = pmd_struc['(:%i)&(!(%s))'%(i + 1, data_io.not_bat_atoms)]
+        this_sel = uni.select_atoms('resnum %i and not (name %s)'%(i+1, data_io.not_bat_atoms[1:].replace(',', ' or name ')))
+        this_traj = uni.trajectory.timeseries(this_sel, order='fac')
+        this_bat_uni = mda.Universe(this_bat_atoms, this_traj)
+        bat_analysis = mda.analysis.bat.BAT(this_bat_uni.select_atoms('all'), initial_atom=this_bat_uni.select_atoms('name C')[0])
+        bat_analysis.run()
+        this_hists, this_edges = analysis_tools.build_bat_histograms(bat_analysis.results.bat[:, 9:])
+        np.savez('sim_BAT_stats_%s%i.npz'%(res_type, i+1), **this_hists, **this_edges)
+
+    # Redo with universe created from decoded trajectory
+    decoded_uni = mda.Universe(pmd_struc.topology, decoded_traj) #, format=mda.coordinates.memory.MemoryReader)
+    for i, res_type in enumerate(full_decode.sequence):
+        if 'GLY' in res_type:
+            continue
+        this_bat_atoms = pmd_struc['(:%i)&(!(%s))'%(i + 1, data_io.not_bat_atoms)]
+        this_sel = decoded_uni.select_atoms('resnum %i and not (name %s)'%(i+1, data_io.not_bat_atoms[1:].replace(',', ' or name ')))
+        this_traj = decoded_uni.trajectory.timeseries(this_sel, order='fac')
+        this_bat_uni = mda.Universe(this_bat_atoms, this_traj)
+        bat_analysis = mda.analysis.bat.BAT(this_bat_uni.select_atoms('all'), initial_atom=this_bat_uni.select_atoms('name C')[0])
+        bat_analysis.run()
+        this_hists, this_edges = analysis_tools.build_bat_histograms(bat_analysis.results.bat[:, 9:])
+        np.savez('decoded_BAT_stats_%s%i.npz'%(res_type, i+1), **this_hists, **this_edges)
 
 
 def main(arg_list):
