@@ -3,17 +3,19 @@ Applies residue-based decodings to an entire protein coarse-grained model.
 """
 
 import sys, os
+import argparse
 import pickle
 
 import numpy as np
 import tensorflow as tf
 
 import parmed as pmd
+import MDAnalysis as mda
 from openmm import app as mmapp
 
 import vaemolsim
 
-from . import data_io, coord_transforms, model_training, unconditional 
+from . import data_io, coord_transforms, model_training, unconditional, analysis_tools 
 
 
 def get_unique_res(sequence):
@@ -445,3 +447,133 @@ class ProteinDecoder(tf.Module):
         return decoded_configs, decoded_probs
 
 
+def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_name=None, n_samples=1):
+    """
+    Assesses the ability of a full protein decoding to recreate an atomistic trajectory.
+    First evaluates all energies of atomistic configurations, then converts to a CG
+    trajectory and decodes some number of times for each frame, evaluating energies and
+    forces of decoded configurations.
+    """
+
+    # First, create a full protein decoding model
+    # Do this first because collects lots of useful information
+    full_decode = ProteinDecoder(pdb_file,
+                                 bat_dir=bat_dir,
+                                 model_dir=model_dir,
+                                 h_bonds=True,
+                                )
+
+    # Load in the pdb file and trajectory to get coordinates from
+    uni = mda.Universe(pdb_file, traj_file)
+
+    # Create an OpenMM simulation object
+    _, sim = analysis_tools.sim_from_pdb(pdb_file)
+    
+    # Get atom indices for every residue
+    res_atom_inds = []
+    for res in uni.residues:
+        this_inds = [a.ix for a in res.atoms]
+        res_atom_inds.append(this_inds)
+
+    # Compute all energies and forces of simulated trajectory
+    # For forces, store max force in each residue
+    sim_energies = []
+    sim_forces = []
+    for frame in uni.trajectory:
+        this_energy, this_forces = analysis_tools.config_energy(frame.positions,
+                                                                sim,
+                                                                compute_forces=True,
+                                                                constrain_H_bonds=True,
+                                                                )
+        sim_energies.append(this_energy)
+        this_force_mags = np.linalg.norm(this_forces, axis=-1)
+        this_max_f = [np.max(this_force_mags[inds]) for inds in res_atom_inds]
+        sim_forces.append(this_max_f)
+
+    sim_energies = np.array(sim_energies)
+    sim_forces = np.array(sim_forces)
+
+    # Generate a CG trajectory from the all-atom one
+    cg_traj = analysis_tools.map_to_cg_configs(uni)
+
+    # Generate a decoded trajectory with n_samples per frame
+    cg_traj = np.tile(cg_traj, (n_samples, 1, 1))
+    decoded_traj = []
+    decoded_probs = []
+    n_chunk = 100
+    for i in range(0, cg_traj.shape[0], n_chunk):
+        decoded_configs, this_probs = full_decode.decode_config(cg_traj[i:(i+n_chunk)])
+        decoded_traj.append(decoded_configs.numpy())
+        decoded_probs.append(this_probs.numpy())
+
+    decoded_traj = np.concatenate(decoded_traj, axis=0)
+    decoded_probs = np.concatenate(decoded_probs, axis=0)
+
+    # Obtain energies and max forces for the decoded trajectory
+    decoded_energies = []
+    decoded_forces = []
+    for config in decoded_traj:
+        this_energy, this_forces = analysis_tools.config_energy(config,
+                                                                sim,
+                                                                compute_forces=True,
+                                                                constrain_H_bonds=True,
+                                                                )
+        decoded_energies.append(this_energy)
+        this_force_mags = np.linalg.norm(this_forces, axis=-1)
+        this_max_f = [np.max(this_force_mags[inds]) for inds in res_atom_inds]
+        decoded_forces.append(this_max_f)
+
+    decoded_energies = np.array(decoded_energies)
+    decoded_forces = np.array(decoded_forces) 
+
+    # Save everything as npz file
+    # To do that nicely, want forces as both arrays and dictionaries categorized by residue type
+    unique_res = np.unique(full_decode.sequence).tolist()
+    unique_inds = [[i for i, r in enumerate(full_decode.sequence) if r == res] for res in unique_res]
+    res_force_dict = {}
+    for res, inds in zip(unique_res, unique_inds):
+        res_force_dict['sim_%s'%res] = sim_forces[:, inds].flatten()
+        res_force_dict['decoded_%s'%res] = decoded_forces[:, inds].flatten()
+
+    # Create an output file name
+    if out_name is None:
+        out_name = pdb_file.split('.pdb')[0].split('/')[-1]
+
+    # Actually save
+    np.savez('energy_analysis_%s.npz'%out_name,
+             sim_energies=sim_energies,
+             decoded_energies=decoded_energies,
+             sim_max_forces=sim_forces,
+             decoded_max_forces=decoded_forces,
+             decoded_probs=decoded_probs,
+             **res_force_dict,
+            )
+
+    # ADD ANALYSIS COMPARING BAT COORDINATE DISTRIBUTIONS!
+    # ALSO CONSIDER ADDING ENERGY DECOMPOSITION
+
+
+def main(arg_list):
+    parser = argparse.ArgumentParser(prog='full_protein_decoding',
+                                     description='Performs analysis using trained residue models to decode full proteins',
+                                    )
+    parser.add_argument('pdb_file', help='path to pdb file of full-atom reference configuration')
+    parser.add_argument('traj_file', help='path to trajectory file')
+    parser.add_argument('--bat_dir', '-b', help='path to directory containing directories named by residue type with pickled BAT objects')
+    parser.add_argument('--model_dir', '-m', help='path to directory containing trained model directories')
+    parser.add_argument('--output', '-o', help='path of output file (WILL OVERWRITE)')
+    parser.add_argument('--n_samples', '-n', type=int, default=1, help='number of decoded samples per frame')
+
+    args = parser.parse_args(arg_list)
+
+    analyze_trajectory(args.pdb_file,
+                       args.traj_file,
+                       bat_dir=args.bat_dir,
+                       model_dir=args.model_dir,
+                       out_name=args.output,
+                       n_samples=args.n_samples,
+                      )
+
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

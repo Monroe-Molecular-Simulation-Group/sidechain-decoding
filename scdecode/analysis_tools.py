@@ -88,7 +88,7 @@ def config_energy(coords, sim_obj, compute_forces=False, constrain_H_bonds=False
         coords = coords * mm.unit.angstrom
     sim_obj.context.setPositions(coords)
     if constrain_H_bonds:
-        sim_obj.context.applyConstraints()
+        sim_obj.context.applyConstraints(sim_obj.integrator.getConstraintTolerance())
     state = sim_obj.context.getState(getEnergy=True, getForces=compute_forces)
     if compute_forces:
         return (state.getPotentialEnergy().value_in_unit(mm.unit.kilojoules_per_mole),
@@ -109,8 +109,8 @@ def sim_from_pdb(pdb_file, implicit_solvent=True):
         forcefield.loadFile('implicit/gbn2.xml') # igb8
     system = forcefield.createSystem(pdb.topology,
                                      nonbondedMethod=mm.app.NoCutoff,
-                                     constrains=HBonds)
-    integrator = mm.LangevinIntegrator(300*mm.unit.kelvin, 1/mm.unit.picosecond, 0.002*mm.unit.picoseconds)
+                                     constraints=mm.app.HBonds)
+    integrator = mm.LangevinMiddleIntegrator(300*mm.unit.kelvin, 1/mm.unit.picosecond, 0.002*mm.unit.picoseconds)
     simulation = mm.app.Simulation(pdb.topology, system, integrator)
     simulation.context.setPositions(pdb.positions)
     return pdb, simulation
