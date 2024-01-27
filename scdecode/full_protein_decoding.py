@@ -5,6 +5,7 @@ Applies residue-based decodings to an entire protein coarse-grained model.
 import sys, os
 import argparse
 import pickle
+import glob
 
 import numpy as np
 import tensorflow as tf
@@ -445,6 +446,9 @@ class ProteinDecoder(tf.Module):
         # Sum over log probabilities (for each decoding model)
         decoded_probs = tf.math.reduce_sum(decoded_probs.stack(), axis=0)
 
+        # Close decoded_one_hot and mark as used to avoid error in eager execution mode
+        decoded_one_hot = decoded_one_hot.close()
+
         return decoded_configs, decoded_probs
 
 
@@ -638,8 +642,175 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
         np.savez('decoded_BAT_stats_%s%i.npz'%(res_type, i+1), **this_hists, **this_edges)
 
 
+# NEED TO TEST AND DEBUG!
+def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='dataset_decoding_analysis', n_samples=100):
+    """
+    Given a list of pdb files (paths), generates full decoding models from provided BAT and
+    model data directories. For each pdb file, n_samples decodings full protein decodings are
+    generated and assessed.
+    """
+
+    # Since will only evaluate each full protein decoding model once, tracing the graph is just extra time
+    tf.config.run_functions_eagerly(True)
+
+    # Avoid loading all models, BAT dictionaries, etc. multiple times
+    # Get unique residue list for loading all BAT objects and models
+    unique_res = get_unique_res(data_io.ref_res_types).tolist()
+    # Need to remove some residue types we do not have models for
+    # (so we don't try and fail to load them)
+    # NHE, NME, and ACE are capping groups
+    # CYX is a cysteine participating in a disulfide bond
+    # CYM, HYP, and LYN are special modifications of residues that had no data in training dataset
+    for r in ['NHE', 'NME', 'ACE', 'CYX', 'CYM', 'HYP', 'LYN']:
+        unique_res.remove(r)
+    print(unique_res)
+    unique_res = np.array(unique_res)
+    # Load dictionaries of BAT objects and decoding models
+    bat_dict = gather_bat_objects(unique_res, search_dir=bat_dir)
+    model_dict, h_info_dict = gather_models(unique_res,
+                                            bat_dict,
+                                            model_dir=model_dir,
+                                            include_cg_target=False,
+                                            constrain_H_bonds=True,
+                                           )
+
+    energies = []
+    energy_decomps = {}
+    decoded_energies = []
+    decoded_energy_decomps = {}
+    decoded_probs = []
+    max_forces_by_res = {}
+    decoded_max_forces_by_res = {}
+    coordination_by_res = {}
+    for rtype in data_io.ref_res_types:
+        max_forces_by_res[rtype] = []
+        decoded_max_forces_by_res[rtype] = []
+        coordination_by_res[rtype] = []
+
+    # Loop over pdb files
+    for file in pdb_files:
+        print("\nOn pdb %s"%(file.split('/')[-1]))
+        
+        # Obtain a ParmEd structure and an OpenMM simulation object
+        this_pdb_obj, this_sim = analysis_tools.sim_from_pdb(file)
+        pmd_struc = pmd.openmm.load_topology(this_pdb_obj.topology, system=this_sim.system, xyz=this_pdb_obj.positions)
+
+        # Get coordination of all residues
+        this_res_coordination = analysis_tools.residue_coordination(pmd_struc['@CA'].coordinates)
+
+        # Create a full decoding model - useful to do this earlier since collects information we want
+        full_decode = ProteinDecoder(file,
+                                     bat_dir=bat_dir,
+                                     model_dir=model_dir,
+                                     bat_dict=bat_dict,
+                                     model_dict=model_dict,
+                                     h_info_dict=h_info_dict,
+                                     h_bonds=True,
+                                    )
+
+        # Collect energy of input structure
+        ref_energy, ref_forces = analysis_tools.config_energy(pmd_struc.coordinates,
+                                                              this_sim,
+                                                              compute_forces=True,
+                                                              constrain_H_bonds=True,
+                                                             )
+        energies.append(ref_energy)
+        ref_force_mags = np.linalg.norm(ref_forces, axis=-1)
+
+        # Need to get max force for atoms in each residue and add to dictionary
+        for i, res in enumerate(full_decode.sequence):
+            this_max_f = np.max(ref_force_mags[[a.idx for a in pmd_struc.residues[i].atoms]])
+            max_forces_by_res[res].append(this_max_f)
+            
+        # Add energy decomposition as well
+        ref_decomp = pmd.openmm.energy_decomposition_system(pmd_struc, this_sim.system, nrg=mm.unit.kilojoules_per_mole)
+        for key, eng in ref_decomp:
+            if key in energy_decomps:
+                energy_decomps[key].append(eng)
+            else:
+                energy_decomps[key] = [eng]
+
+        # Generate a CG configuration
+        cg_config = analysis_tools.map_to_cg_configs(mda.Universe(pmd_struc))
+        
+        # Decode n_samples of configurations
+        cg_config = np.tile(cg_config, (n_samples, 1, 1))
+        gen_configs, gen_probs = full_decode.decode_config(cg_config)
+        
+        decoded_probs.append(gen_probs.numpy())
+
+        # Obtain energies, forces and decompositions of decoded configurations
+        for config in gen_configs.numpy():
+        
+            this_energy, this_forces = analysis_tools.config_energy(config,
+                                                                    this_sim,
+                                                                    compute_forces=True,
+                                                                    constrain_H_bonds=True,
+                                                                    )
+            decoded_energies.append(this_energy)
+            this_force_mags = np.linalg.norm(this_forces, axis=-1)
+
+            # As loop, will also add coordination
+            # That way, make sure that they align with each other
+            # And can match up to reference structure max forces because know n_samples
+            for i, res in enumerate(full_decode.sequence):
+                this_max_f = np.max(this_force_mags[[a.idx for a in pmd_struc.residues[i].atoms]])
+                decoded_max_forces_by_res[res].append(this_max_f)
+                coordination_by_res[res].append(this_res_coordination[i])
+            
+            # Add energy decomposition as well
+            pmd_struc.coordinates = config
+            this_decomp = pmd.openmm.energy_decomposition_system(pmd_struc, this_sim.system, nrg=mm.unit.kilojoules_per_mole)
+            for key, eng in this_decomp:
+                if key in decoded_energy_decomps:
+                    decoded_energy_decomps[key].append(eng)
+                else:
+                    decoded_energy_decomps[key] = [eng]
+    
+    # Clean up output and save
+    energies = np.array(energies)
+    decoded_energies = np.array(decoded_energies)
+    decoded_probs = np.concatenate(decoded_probs)
+    
+    out_energy_decomps = {}
+    for key, eng in energy_decomps.items():
+        out_energy_decomps['ref_'+key] = np.array(eng)
+    out_energy_decomps.pop('ref_CMMotionRemover', None)
+    
+    out_decoded_energy_decomps = {}
+    for key, eng in decoded_energy_decomps.items():
+        out_decoded_energy_decomps['decoded_'+key] = np.array(eng)
+    out_decoded_energy_decomps.pop('decoded_CMMotionRemover', None)
+
+    out_max_forces_by_res = {}
+    for key, val in max_forces_by_res.items():
+        out_max_forces_by_res['ref_'+key] = np.array(val)
+
+    out_decoded_max_forces_by_res = {}
+    for key, val in decoded_max_forces_by_res.items():
+        out_decoded_max_forces_by_res['decoded_'+key] = np.array(val)
+
+    out_coordination_by_res = {}
+    for key, val in coordination_by_res.items():
+        out_coordination_by_res['coordination_'+key] = np.array(val)
+
+    # Note that cannot easily compare residue coordination (burial) to reference max forces
+    # Can only compare for max forces on decoded residues since those match up
+    np.savez('%s.npz'%out_name,
+             n_samples=n_samples,
+             ref_energies=energies,
+             decoded_energies=decoded_energies,
+             decoded_probs=decoded_probs,
+             **out_energy_decomps,
+             **out_decoded_energy_decomps,
+             **out_max_forces_by_res,
+             **out_decoded_max_forces_by_res,
+             **out_coordination_by_res,
+            )
+
+
 def run_traj_analysis(arg_list):
-    parser = argparse.ArgumentParser(prog='full_protein_decoding',
+    parser = argparse.ArgumentParser(prog='full_protein_decoding.run_traj_analysis',
                                      description='Performs analysis using trained residue models to decode full proteins',
                                     )
     parser.add_argument('pdb_file', help='path to pdb file of full-atom reference configuration')
@@ -660,5 +831,32 @@ def run_traj_analysis(arg_list):
                       )
 
 
+def run_dataset_analysis(arg_list):
+    parser = argparse.ArgumentParser(prog='full_protein_decoding.run_dataset_analysis',
+                                     description='Performs analysis over dataset of proteins',
+                                    )
+    parser.add_argument('pdb_dir', help='path to directory containing pdb files')
+    parser.add_argument('--bat_dir', '-b', help='path to directory containing directories named by residue type with pickled BAT objects')
+    parser.add_argument('--model_dir', '-m', help='path to directory containing trained model directories')
+    parser.add_argument('--output', '-o', default='dataset_decoding_analysis', help='path of output file (WILL OVERWRITE)')
+    parser.add_argument('--n_samples', '-n', type=int, default=100, help='number of decoded samples per frame')
+
+    args = parser.parse_args(arg_list)
+
+    pdb_files = glob.glob('%s/*.pdb'%args.pdb_dir)
+
+    analyze_protein_dataset(pdb_files,
+                            bat_dir=args.bat_dir,
+                            model_dir=args.model_dir,
+                            out_name=args.output,
+                            n_samples=args.n_samples,
+                           )
+
+
 if __name__ == '__main__':
-    run_traj_analysis(sys.argv[1:])
+    if sys.argv[1] == 'trajectory':
+        run_traj_analysis(sys.argv[2:])
+    elif sys.argv[1] == 'dataset':
+        run_dataset_analysis(sys.argv[2:])
+    else:
+        print("Argument \'%s\' unrecognized. For the first argument, select \'trajectory\' or \'dataset\'."%sys.argv[1])

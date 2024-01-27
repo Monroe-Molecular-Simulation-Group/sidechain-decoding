@@ -574,4 +574,4 @@ if __name__ == "__main__":
     elif sys.argv[1] == 'plot_analysis':
         plot_analysis(sys.argv[2:])
     else:
-        print("Argument \'%s\' unrecognized. For the first argument, select \'bat_stats\', \'analyze_model\', or \'plot_analysis\'.")
+        print("Argument \'%s\' unrecognized. For the first argument, select \'bat_stats\', \'analyze_model\', or \'plot_analysis\'."%sys.argv[1])
