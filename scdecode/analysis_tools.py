@@ -207,6 +207,27 @@ def create_cg_structure(pmd_struc, mda_uni=None):
     return combined_struc
 
 
+def residue_coordination(res_sites, cutoff=10.0):
+    """
+    Given C-alpha positions or CG sites, assess their degree of coordination
+    (i.e., the number of neighbors within a specified cutoff (in Angstroms)
+    res_sites should be an (N_res, 3) array
+    """
+    dist_sq_mat = np.sum((res_sites[None, :, :] - res_sites[:, None, :])**2, axis=-1)
+    cut_bool = dist_sq_mat <= (cutoff**2)
+    coord_nums = np.sum(cut_bool, axis=-1)
+    return coord_nums
+
+
+def residue_burial(res_sites, cutoff=10.0, buried_num=4):
+    """
+    Calculates the coordinate of all residue sites to other sites and classifies as buried or not
+    """
+    coord_nums = residue_coordination(res_sites, cutoff=cutoff)
+    buried_res = (coord_nums <= buried_num)
+    return buried_res
+
+
 # Need to add arguments --include_cg and --h_bonds analagously to train_model
 def analyze_model(arg_list):
     """

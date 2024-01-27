@@ -517,6 +517,17 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
     # Generate a CG trajectory from the all-atom one
     cg_traj = analysis_tools.map_to_cg_configs(uni)
 
+    # Since have CG trajectory, interesting to assess the burial of residues
+    # Can base on C-alpha atoms or CG sites - using C-alpha atoms for consistency
+    # with other literature
+    res_coordination = []
+    c_alpha_sel = uni.select_atoms('name CA')
+    for frame in uni.trajectory:
+        this_coordination = analysis_tools.residue_coordination(c_alpha_sel.positions)
+        res_coordination.append(this_coordination)
+
+    res_coordination = np.array(res_coordination)
+
     print("\nGenerated CG trajectory from all-atom simulation trajectory.")
 
     # Generate a decoded trajectory with n_samples per frame
@@ -585,6 +596,7 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
              decoded_energy=decoded_energies,
              sim_max_force=sim_forces,
              decoded_max_force=decoded_forces,
+             res_coordination=res_coordination,
              decoded_probs=decoded_probs,
              **out_sim_decomp,
              **out_decoded_decomp,
@@ -626,7 +638,7 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
         np.savez('decoded_BAT_stats_%s%i.npz'%(res_type, i+1), **this_hists, **this_edges)
 
 
-def main(arg_list):
+def run_traj_analysis(arg_list):
     parser = argparse.ArgumentParser(prog='full_protein_decoding',
                                      description='Performs analysis using trained residue models to decode full proteins',
                                     )
@@ -649,4 +661,4 @@ def main(arg_list):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    run_traj_analysis(sys.argv[1:])
