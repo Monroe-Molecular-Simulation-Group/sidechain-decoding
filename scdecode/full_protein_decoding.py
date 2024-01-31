@@ -691,6 +691,9 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
     clash_score_stats = []
     bond_score_stats = []
     diversity_score_stats = []
+    clash_score_noH_stats = []
+    bond_score_noH_stats = []
+    diversity_score_noH_stats = []
 
     # And general stats on proteins
     num_res = []
@@ -708,6 +711,10 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
 
         num_res.append(len(pmd_struc.residues))
         num_atoms.append(len(pmd_struc.atoms))
+
+        # Helpful to have a structure without hydrogens as well
+        pmd_struc_noH = pmd_struc['!(@H=)']
+        noH_inds = [a.idx for a in pmd_struc.view['!(@H=)'].atoms]
 
         # Get coordination of all residues
         this_res_coordination = analysis_tools.residue_coordination(pmd_struc['@CA'].coordinates)
@@ -758,6 +765,9 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
         bond_score_stats.append(analysis_tools.bond_score(pmd_struc.topology, pmd_struc.coordinates, gen_configs))
         clash_score_stats.append(analysis_tools.clash_score(gen_configs))
         diversity_score_stats.append(analysis_tools.diversity_score(pmd_struc.coordinates, gen_configs))
+        bond_score_noH_stats.append(analysis_tools.bond_score(pmd_struc_noH.topology, pmd_struc_noH.coordinates, gen_configs[:, noH_inds, :]))
+        clash_score_noH_stats.append(analysis_tools.clash_score(gen_configs[:, noH_inds, :]))
+        diversity_score_noH_stats.append(analysis_tools.diversity_score(pmd_struc_noH.coordinates, gen_configs[:, noH_inds, :]))
 
         # Obtain energies, forces and decompositions of decoded configurations
         for config in gen_configs:
@@ -830,6 +840,9 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
              bond_scores=np.array(bond_score_stats),
              clash_scores=np.array(clash_score_stats),
              diversity_scores=np.array(diversity_score_stats),
+             bond_scores_noH=np.array(bond_score_noH_stats),
+             clash_scores_noH=np.array(clash_score_noH_stats),
+             diversity_scores_noH=np.array(diversity_score_noH_stats),
              **out_energy_decomps,
              **out_decoded_energy_decomps,
              **out_max_forces_by_res,
