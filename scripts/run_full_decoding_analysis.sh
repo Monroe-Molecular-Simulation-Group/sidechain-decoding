@@ -26,6 +26,6 @@ modeldir="${HOME}/Sidechain_Decoding/logprob_trained_models"
 
 # python -m scdecode.full_protein_decoding trajectory ~/Sidechain_Decoding/simulations/1UAO.pdb ~/Sidechain_Decoding/simulations/openmm_restrained/1UAO_restrained.nc -b $inputdir -m $modeldir
 
-python -m scdecode.full_protein_decoding dataset ~/Sidechain_Decoding/Jones_PDB_test_pdbs -b $inputdir -m $modeldir
+python -m scdecode.full_protein_decoding dataset ~/Sidechain_Decoding/Jones_PDB_test_pdbs/energy_min_pdbs -b $inputdir -m $modeldir
 
 echo "Ended at time $(date)"

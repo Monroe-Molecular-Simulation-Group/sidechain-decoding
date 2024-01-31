@@ -23,6 +23,7 @@ def prep_pdb(pdbid, missing_cutoff=0.10, mod_cutoff=0.01):
     ----------
     pdbid : str
         The 4-letter PDB id (will download from the RCSB)
+        OR, can specify a file to open (will try both)
     missing_cutoff : float, default=0.1
         A value on the half-open interval (0.0, 1.0] specifying the maximum tolerated
         fraction of missing residues; e.g., if set to 0.2 and 30% of the residues are
@@ -57,14 +58,20 @@ def prep_pdb(pdbid, missing_cutoff=0.10, mod_cutoff=0.01):
       raise ValueError('Cutoff for maximum tolerated fraction of missing residues is %f '
       'but must be in (0.0, 1.0].'%missing_cutoff)
 
-    pdb = PDBFixer(pdbid=pdbid)
+    try:
+        pdb = PDBFixer(filename=pdbid)
+    except IOError:
+        pdb = PDBFixer(pdbid=pdbid)
 
     # Remove ligands, ions, water, etc.
     # Setting to false removes both ligands, ions, AND water
     pdb.removeHeterogens(False)
 
     # Get total number of residues
-    tot_res = sum([len(seq.residues) for seq in pdb.sequences])
+    if len(pdb.sequences) == 0:
+        tot_res = len([r for r in pdb.topology.residues()])
+    else:
+        tot_res = sum([len(seq.residues) for seq in pdb.sequences])
 
     # Find number of missing residues to see if want to use this PDB file
     pdb.findMissingResidues()
