@@ -215,7 +215,7 @@ def residue_coordination(res_sites, cutoff=10.0):
     """
     dist_sq_mat = np.sum((res_sites[None, :, :] - res_sites[:, None, :])**2, axis=-1)
     cut_bool = dist_sq_mat <= (cutoff**2)
-    coord_nums = np.sum(cut_bool, axis=-1)
+    coord_nums = np.sum(cut_bool, axis=-1) - 1 # Subtract one to exclude residue distance with self
     return coord_nums
 
 
@@ -226,6 +226,77 @@ def residue_burial(res_sites, cutoff=10.0, buried_num=4):
     coord_nums = residue_coordination(res_sites, cutoff=cutoff)
     buried_res = (coord_nums <= buried_num)
     return buried_res
+
+
+def has_clashes(res_atoms, other_atoms, cutoff=1.2):
+    """
+    To find the clash score, (Yang, 2023 and Jones, 2023) defined as the fraction
+    of residues with atoms within 0.12 nm (1.2 Angstroms) of atoms of other residues,
+    identify the number of residues experiencing clashes here for all configurations.
+    Inputs should be arrays of (N_atoms, 3).
+    """
+    dist_sq_mat = np.sum((other_atoms[None, :, :] - res_atoms[:, None, :])**2, axis=-1)
+    cut_bool = dist_sq_mat < (cutoff**2)
+    return int(np.any(cut_bool))
+
+
+def clash_score(configs, cutoff=1.2, higher_cut=5.0):
+    """
+    Computes clash score, but instead of as a fraction of residues with clashes, as a fraction
+    of atoms within 5 Angstroms of each other, which is in line with the original description
+    in Yang, 2023 and the code for Jones, 2023.
+    Returns score and number of distances within each cutoff (so can recompute).
+    """
+    dist_sq_mat = np.sum((configs[:, None, :, :] - configs[:, :, None, :])**2, axis=-1)
+    within_cut = np.sum(dist_sq_mat < (cutoff**2))
+    within_max = np.sum(dist_sq_mat < (higher_cut**2))
+    return within_cut/within_max, within_cut, within_max
+
+
+def bond_score(topology, ref_config, configs, cutoff=0.10):
+    """
+    Determines number of bonds within cutoff*100% of their reference configuration lengths.
+    Uses a topology to identify pairs and for computing bonds.
+    Takes fraction of such bonds to report as score.
+    Returns score, number of bonds within cutoff, and total number of bonds.
+    """
+    bond_pairs = [[b[0].index, b[1].index] for b in topology.bonds()]
+    bond_pairs = np.array(bond_pairs)
+    ref_diffs = ref_config[bond_pairs[:, 1]] - ref_config[bond_pairs[:, 0]]
+    ref_bonds = np.sqrt(np.sum(ref_diffs*ref_diffs, axis=-1))
+    gen_diffs = configs[:, bond_pairs[:, 1], :] - configs[:, bond_pairs[:, 0], :]
+    gen_bonds = np.sqrt(np.sum(gen_diffs*gen_diffs, axis=-1))
+    within_cutoff = (np.abs(gen_bonds - ref_bonds) < cutoff*ref_bonds)
+    return np.sum(within_cutoff) / np.size(within_cutoff), np.sum(within_cutoff), np.size(within_cutoff)
+
+
+def diversity_score_raw(ref_config, configs):
+    """
+    Calculates the diversity score (see Jones, 2023). Essentially the ratio of RMSD between
+    the generated configurations and the references to the RMSD between all generated configs to each other..
+    """
+    rmsd_to_ref = np.sqrt(np.average(np.sum((configs - ref_config)**2, axis=-1), axis=-1))
+    avg_rmsd_to_ref = np.average(rmsd_to_ref)
+    rmsd_combos = []
+    for i in range(configs.shape[0]):
+        for j in range(i+1, configs.shape[0]):
+            this_rmsd = np.sqrt(np.average(np.sum((configs[i] - configs[j])**2, axis=-1), axis=-1))
+            rmsd_combos.append(this_rmsd)
+    avg_rmsd_combos = np.sum(rmsd_combos) / len(rmsd_combos)
+    return 1.0 - (avg_rmsd_combos / avg_rmsd_to_ref)
+
+
+def diversity_score(ref_config, configs):
+    """
+    Same as diversity score, but computes both value and bootstrap estimate of variance
+    (from 100 resamples)
+    """
+    raw_score = diversity_score_raw(ref_config, configs)
+    bootstrap_inds = np.random.choice(configs.shape[0], size=(100, configs.shape[0]))
+    bootstrap_resamples = []
+    for inds in bootstrap_inds:
+        bootstrap_resamples.append(diversity_score_raw(ref_config, configs[inds]))
+    return raw_score, np.var(bootstrap_resamples)
 
 
 # Need to add arguments --include_cg and --h_bonds analagously to train_model

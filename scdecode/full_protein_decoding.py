@@ -547,7 +547,7 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
     decoded_traj = np.concatenate(decoded_traj, axis=0)
     decoded_probs = np.concatenate(decoded_probs, axis=0)
 
-    print("\nDecoding complete. Calculating energies of decoded configurations.")
+    print("\nDecoding complete. Calculating stats and energies of decoded configurations.")
 
     # Obtain energies and max forces for the decoded trajectory
     decoded_energies = []
@@ -642,7 +642,6 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
         np.savez('decoded_BAT_stats_%s%i.npz'%(res_type, i+1), **this_hists, **this_edges)
 
 
-# NEED TO TEST AND DEBUG!
 def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='dataset_decoding_analysis', n_samples=100):
     """
     Given a list of pdb files (paths), generates full decoding models from provided BAT and
@@ -687,13 +686,28 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
         decoded_max_forces_by_res[rtype] = []
         coordination_by_res[rtype] = []
 
+    # Other metrics for decoded configurations
+    # Will save on a per-protein basis
+    clash_score_stats = []
+    bond_score_stats = []
+    diversity_score_stats = []
+
+    # And general stats on proteins
+    num_res = []
+    num_atoms = []
+    pdb_ids = []
+
     # Loop over pdb files
     for file in pdb_files:
         print("\nOn pdb %s"%(file.split('/')[-1]))
+        pdb_ids.append(file.split('/')[-1].split('.pdb')[0])
         
         # Obtain a ParmEd structure and an OpenMM simulation object
         this_pdb_obj, this_sim = analysis_tools.sim_from_pdb(file)
         pmd_struc = pmd.openmm.load_topology(this_pdb_obj.topology, system=this_sim.system, xyz=this_pdb_obj.positions)
+
+        num_res.append(len(pmd_struc.residues))
+        num_atoms.append(len(pmd_struc.atoms))
 
         # Get coordination of all residues
         this_res_coordination = analysis_tools.residue_coordination(pmd_struc['@CA'].coordinates)
@@ -736,11 +750,17 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
         # Decode n_samples of configurations
         cg_config = np.tile(cg_config, (n_samples, 1, 1))
         gen_configs, gen_probs = full_decode.decode_config(cg_config)
+        gen_configs = gen_configs.numpy()
         
         decoded_probs.append(gen_probs.numpy())
 
+        # Get bond, clash, and diversity scores now (just need generated configurations and reference)
+        bond_score_stats.append(analysis_tools.bond_score(pmd_struc.topology, pmd_struc.coordinates, gen_configs))
+        clash_score_stats.append(analysis_tools.clash_score(gen_configs))
+        diversity_score_stats.append(analysis_tools.diversity_score(pmd_struc.coordinates, gen_configs))
+
         # Obtain energies, forces and decompositions of decoded configurations
-        for config in gen_configs.numpy():
+        for config in gen_configs:
         
             this_energy, this_forces = analysis_tools.config_energy(config,
                                                                     this_sim,
@@ -754,8 +774,11 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
             # That way, make sure that they align with each other
             # And can match up to reference structure max forces because know n_samples
             for i, res in enumerate(full_decode.sequence):
-                this_max_f = np.max(this_force_mags[[a.idx for a in pmd_struc.residues[i].atoms]])
+                atom_inds = [a.idx for a in pmd_struc.residues[i].atoms]
+                this_max_f = np.max(this_force_mags[atom_inds])
                 decoded_max_forces_by_res[res].append(this_max_f)
+                atom_mask = np.zeros(config.shape[0], dtype=bool)
+                atom_mask[atom_inds] = True
                 coordination_by_res[res].append(this_res_coordination[i])
             
             # Add energy decomposition as well
@@ -798,9 +821,15 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
     # Can only compare for max forces on decoded residues since those match up
     np.savez('%s.npz'%out_name,
              n_samples=n_samples,
+             pdb_ids=np.array(pdb_ids),
+             n_res=np.array(num_res),
+             n_atoms=np.array(num_atoms),
              ref_energies=energies,
              decoded_energies=decoded_energies,
              decoded_probs=decoded_probs,
+             bond_scores=np.array(bond_score_stats),
+             clash_scores=np.array(clash_score_stats),
+             diversity_scores=np.array(diversity_score_stats),
              **out_energy_decomps,
              **out_decoded_energy_decomps,
              **out_max_forces_by_res,
@@ -844,6 +873,7 @@ def run_dataset_analysis(arg_list):
     args = parser.parse_args(arg_list)
 
     pdb_files = glob.glob('%s/*.pdb'%args.pdb_dir)
+
 
     analyze_protein_dataset(pdb_files,
                             bat_dir=args.bat_dir,
