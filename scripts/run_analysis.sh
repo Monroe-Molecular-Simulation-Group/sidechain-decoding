@@ -18,8 +18,8 @@ module load nvhpc/22.7
 module load python/3.12-anaconda
 conda activate new_tf_protein_env
 
-datadir="/storage/jm217/data_Sidechain_Decoding/energy_min_training_inputs"
-modeldir="${HOME}/Sidechain_Decoding/energy_min_trained_models"
+datadir="/storage/jm217/data_Sidechain_Decoding/training_inputs"
+modeldir="${HOME}/Sidechain_Decoding/noemin_logprob_trained_models"
 resnames=("ALA" "ARG" "ASH" "ASN" "ASP" "CYM" "CYS" "GLH" "GLN" "GLU" "GLY" "HID" "HIE" "HIP" "HYP" "ILE" "LEU" "LYN" "LYS" "MET" "PHE" "PRO" "SER" "THR" "TRP" "TYR" "VAL")
 
 export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:$LD_LIBRARY_PATH

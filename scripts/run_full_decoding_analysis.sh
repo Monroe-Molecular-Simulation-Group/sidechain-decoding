@@ -1,9 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=full_decode
 #SBATCH --output=%x.out
-#SBATCH --partition condo
-#SBATCH --qos condo
-#SBATCH --constraint jm217
+#SBATCH --partition agpu72
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=64
 #SBATCH --time=24:00:00

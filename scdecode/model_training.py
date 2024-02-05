@@ -118,9 +118,9 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
         cg_sample = tf.reduce_sum(self.mass_weights * xyz_sample, axis=1)
 
         # Assuming Gaussian distribution, enforce sampled CG close to reference
-        cg_penalty = tf.reduce_sum(self.one_over_cg_var * (cg_sample - cg_ref)**2 / 2.0, axis=-1)
+        # cg_penalty = tf.reduce_sum(self.one_over_cg_var * (cg_sample - cg_ref)**2 / 2.0, axis=-1)
         # Or try a Laplace distribution instead
-        # cg_penalty = tf.reduce_sum(self.one_over_cg_var * tf.math.abs(cg_sample - cg_ref), axis=-1)
+        cg_penalty = tf.reduce_sum(self.one_over_cg_var * tf.math.abs(cg_sample - cg_ref), axis=-1)
 
         return log_prob + cg_penalty
 
@@ -275,7 +275,7 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_
     callback_list = [tf.keras.callbacks.ModelCheckpoint(os.path.join(save_dir, '%s_decoder'%save_name, '%s_weights.ckpt'%save_name),
                                                         monitor='val_loss',
                                                         mode='min',
-                                                        save_best_only=False, # If annealing CG penalty, set to False
+                                                        save_best_only=True, # If annealing CG penalty, set to False
                                                         save_weights_only=True
                                                        ),
                      tf.keras.callbacks.TerminateOnNaN(),

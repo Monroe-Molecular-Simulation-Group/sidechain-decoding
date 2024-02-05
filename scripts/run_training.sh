@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=64
 #SBATCH --time=72:00:00
-#SBATCH --array=1
+#SBATCH --array=0-26
 
 echo "Starting time is $(date)"
 
@@ -18,7 +18,7 @@ module load nvhpc/22.7
 module load python/3.12-anaconda
 conda activate new_tf_protein_env
 
-datadir="/storage/jm217/data_Sidechain_Decoding/energy_min_training_inputs"
+datadir="/storage/jm217/data_Sidechain_Decoding/training_inputs"
 resnames=("ALA" "ARG" "ASH" "ASN" "ASP" "CYM" "CYS" "GLH" "GLN" "GLU" "GLY" "HID" "HIE" "HIP" "HYP" "ILE" "LEU" "LYN" "LYS" "MET" "PHE" "PRO" "SER" "THR" "TRP" "TYR" "VAL")
 
 export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:$LD_LIBRARY_PATH

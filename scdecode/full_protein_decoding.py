@@ -126,7 +126,12 @@ def gather_models(res_types,
     
         # Set up right loss
         if include_cg_target and res not in unconditional_types:
-            loss = model_training.LogProbPenalizedCGLoss(bat_dict[res], mask_H=constrain_H_bonds)
+            # Setting one_over_cg_var to zero so acts like normal log-probability loss if use here
+            # Safer because need this loss if contraining H bonds when training, but may have set
+            # the CG penalization weight (i.e., one_over_cg_var) to zero
+            # Either way, should not need loss here
+            loss = model_training.LogProbPenalizedCGLoss(bat_dict[res], mask_H=constrain_H_bonds,
+                                                         one_over_cg_var=0.0)
         else:
             loss = vaemolsim.losses.LogProbLoss()
 
@@ -466,6 +471,7 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
                                  bat_dir=bat_dir,
                                  model_dir=model_dir,
                                  h_bonds=True,
+                                 include_cg=True, # Need if constraining bonds involving hydrogens
                                 )
 
     # Create an OpenMM simulation object
@@ -727,6 +733,7 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
                                      model_dict=model_dict,
                                      h_info_dict=h_info_dict,
                                      h_bonds=True,
+                                     include_cg=True, # Need if constraining bonds involving hydrogens
                                     )
 
         # Collect energy of input structure
