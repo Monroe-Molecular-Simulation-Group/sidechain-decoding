@@ -63,18 +63,23 @@ def convert_to_CG_traj(centroid_pdb_files, aa_pdb_files):
             atom.name = 'H'
 
     # Load in trajectories of centroid representation and all-atom
-    cen_uni = mda.Universe(centroid_pdb_files[0], centroid_pdb_files)
-    cen_sel = cen_uni.select_atoms('name CEN')
+    # Do in chunks to avoid too many open files at once
     cen_traj = []
-    for frame in cen_uni.trajectory:
-        cen_traj.append(cen_sel.positions)
+    for i in range(0, len(centroid_pdb_files), 1000):
+        cen_uni = mda.Universe(centroid_pdb_files[0], centroid_pdb_files[i:(i+1000)])
+        cen_sel = cen_uni.select_atoms('name CEN')
+        for frame in cen_uni.trajectory:
+            cen_traj.append(cen_sel.positions)
+        cen_uni.trajectory.close() # Close necessary to avoid too many open files
     cen_traj = np.array(cen_traj)
 
-    aa_uni = mda.Universe(aa_pdb_files[0], aa_pdb_files)
-    aa_sel = aa_uni.select_atoms('name %s'%cg_atoms[1:].replace(',', ' or name '))
     aa_traj = []
-    for frame in aa_uni.trajectory:
-        aa_traj.append(aa_sel.positions)
+    for i in range(0, len(aa_pdb_files), 1000):
+        aa_uni = mda.Universe(aa_pdb_files[0], aa_pdb_files[i:(i+1000)])
+        aa_sel = aa_uni.select_atoms('name %s'%cg_atoms[1:].replace(',', ' or name '))
+        for frame in aa_uni.trajectory:
+            aa_traj.append(aa_sel.positions)
+        aa_uni.trajectory.close()
     aa_traj = np.array(aa_traj)
 
     full_cg_traj = np.concatenate([aa_traj, cen_traj], axis=1)
