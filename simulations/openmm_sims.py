@@ -102,7 +102,7 @@ def protein_sim(pdb_file,
                    max_temperature=450.0*mm.unit.kelvin,
                    n_temperatures=4,
                   )
-        equil_time = 0.01 * mm.unit.nanosecond
+        equil_time = 1.0 * mm.unit.nanosecond
         equil_steps = int(equil_time / time_step)
         sim.equilibrate(equil_steps // n_steps_per_swap)
         sim.run()

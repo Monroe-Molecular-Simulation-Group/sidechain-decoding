@@ -19,6 +19,6 @@ conda activate new_tf_protein_env
 
 export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:$LD_LIBRARY_PATH
 
-python ~/bin/sidechain-decoding/simulations/openmm_sims.py ~/Sidechain_Decoding/simulations/1UAO.pdb -n 500000000 --restrain --tempering
+python ~/bin/sidechain-decoding/simulations/openmm_sims.py ~/Sidechain_Decoding/simulations/1UAO.pdb -n 500000000 --tremd
 
 echo "Ended at time $(date)"
