@@ -5,15 +5,40 @@ import argparse
 
 import numpy as np
 
+from netCDF4 import Dataset
+
 import openmm as mm
 from openmm import app as mmapp
 from openmmtools import states, mcmc, multistate
 import parmed as pmd
+import MDAnalysis as mda
 
 # from scdecode import data_io
 
 # Define CG atoms
 cg_atoms = '@N,CA,C,O,H,CB,OXT'
+
+
+def convert_tremd_traj(pdb_file, checkpoint_traj_file):
+    """
+    Converts the openmmtools REMD output checkpoint trajectory file to a standard netcdf trajecctory.
+    Only pulls out the lowest-temperature replica trajectory.
+    """
+    out_name = checkpoint_traj_file.split('.nc')[0].split('/')[-1].split('checkpoint_traj_')[-1]
+
+    # Read in positions from the checkpoint_traj_file
+    with Dataset(checkpoint_traj_file, 'r') as dat:
+        # Pulling out lowest-temperature replica only
+        # Note conversion from nm to Angstroms (MDAnalysis needs this)
+        # And excluding initial configuration
+        # Keep in mind when comparing to energies!
+        positions = 10.0 * dat['positions'][1:, 0, :, :] 
+
+    # Create a universe with the pdb as a topology and the trajectory from the positions in memory
+    uni = mda.Universe(pdb_file, positions, format=mda.coordinates.memory.MemoryReader)
+
+    # Write out the new trajectory
+    uni.select_atoms("all").write("%s_tremd.nc"%out_name, frames="all")
 
 
 def protein_sim(pdb_file,
@@ -77,7 +102,7 @@ def protein_sim(pdb_file,
                                               )
 
         # Set up MC move set for between replica exchange attempts
-        n_steps_per_swap = 500
+        n_steps_per_swap = write_freq // 10
         mc_moves = mcmc.LangevinDynamicsMove(timestep=time_step,
                                              collision_rate=1.0/mm.unit.picosecond,
                                              n_steps=n_steps_per_swap,
@@ -90,7 +115,7 @@ def protein_sim(pdb_file,
        
         # Add reporter object to manage output
         reporter = multistate.MultiStateReporter('replica_info_%s.nc'%out_name,
-                                                 checkpoint_interval=write_freq//n_steps_per_swap,
+                                                 checkpoint_interval=10,
                                                  checkpoint_storage='checkpoint_traj_%s.nc'%out_name,
                                                 )
 
@@ -106,6 +131,9 @@ def protein_sim(pdb_file,
         equil_steps = int(equil_time / time_step)
         sim.equilibrate(equil_steps // n_steps_per_swap)
         sim.run()
+
+        # Save a trajectory of ONLY the lowest temperature replica in standard netcdf trajectory format
+        convert_tremd_traj(pdb_file, 'checkpoint_traj_%s.nc'%out_name)
 
     else:
         # Set up simulation
