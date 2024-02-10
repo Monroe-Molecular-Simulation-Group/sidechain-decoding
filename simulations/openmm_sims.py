@@ -110,15 +110,18 @@ def protein_sim(pdb_file,
                                              constraint_tolerance=1e-06,
                                             )
 
-        # Set up replica exchange simulation
-        sim = multistate.ParallelTemperingSampler(mcmc_moves=mc_moves, number_of_iterations=n_steps//n_steps_per_swap)
-       
         # Add reporter object to manage output
         reporter = multistate.MultiStateReporter('replica_info_%s.nc'%out_name,
                                                  checkpoint_interval=10,
                                                  checkpoint_storage='checkpoint_traj_%s.nc'%out_name,
                                                 )
 
+        # Set up replica exchange simulation
+        sim = multistate.ParallelTemperingSampler(mcmc_moves=mc_moves,
+                                                  number_of_iterations=n_steps//n_steps_per_swap,
+                                                  online_analysis_interval=None,
+                                                 )
+       
         # Create simulation, equilibrate, then run
         sim.create(ref_state,
                    states.SamplerState(pdb.positions),
@@ -127,6 +130,7 @@ def protein_sim(pdb_file,
                    max_temperature=450.0*mm.unit.kelvin,
                    n_temperatures=4,
                   )
+        print('\n Running replicas at temperatures: %s'%str([s.temperature for s in sim._replica_thermodynamic_states]))
         equil_time = 1.0 * mm.unit.nanosecond
         equil_steps = int(equil_time / time_step)
         sim.equilibrate(equil_steps // n_steps_per_swap)

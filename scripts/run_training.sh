@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=64
 #SBATCH --time=72:00:00
-#SBATCH --array=0-26
+#SBATCH --array=9,10,15,16,18-26
 
 echo "Starting time is $(date)"
 

@@ -11,8 +11,3 @@ dependencies:
   - mdanalysis
   - openmm
   - openmmtools
-  - jupyter
-  - jupyterlab
-  - ipykernel
-  - ipywidgets=7
-  - nglview
