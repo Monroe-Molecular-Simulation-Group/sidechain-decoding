@@ -857,6 +857,54 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
              **out_coordination_by_res,
             )
 
+def decode_CG_traj(aa_pdb_file, cg_pdb_file, cg_traj_file, bat_dir='./', model_dir='./', n_samples=1):
+    """
+    Decodes n_samples configurations per frame of a CG trajectory.
+    As input, an all-atom pdb file, a CG pdb file, and a CG trajectory are required.
+    To correctly load the full decoding model, directories for BAT objects and trained
+    models are also required.
+    """
+
+    # First, create a full protein decoding model
+    full_decode = ProteinDecoder(aa_pdb_file,
+                                 bat_dir=bat_dir,
+                                 model_dir=model_dir,
+                                 h_bonds=True,
+                                 include_cg=True, # Need if constraining bonds involving hydrogens
+                                )
+
+    # Load in the CG trajectory
+    cg_uni = mda.Universe(cg_pdb_file, cg_traj_file)
+
+    # Loop over frames to get all CG coordinates
+    cg_traj = []
+    for frame in cg_uni.trajectory:
+        cg_traj.append(frame.positions.copy())
+    cg_traj = np.array(cg_traj)
+
+    # Generate a decoded trajectory with n_samples per frame
+    cg_traj = np.tile(cg_traj, (n_samples, 1, 1))
+    decoded_traj = []
+    decoded_probs = []
+    n_chunk = 100
+    for i in range(0, cg_traj.shape[0], n_chunk):
+        decoded_configs, this_probs = full_decode.decode_config(cg_traj[i:(i+n_chunk)])
+        decoded_traj.append(decoded_configs.numpy())
+        decoded_probs.append(this_probs.numpy())
+
+    decoded_traj = np.concatenate(decoded_traj, axis=0)
+    decoded_probs = np.concatenate(decoded_probs, axis=0)
+
+    # Save the decoded trajectory and probabilities
+    # For the probabilities, also indicate which CG frame the decoded config corresponds to
+    aa_uni = mda.Universe(aa_pdb_file, decoded_traj)
+    out_traj_name = 'decoded_' + cg_traj_file.split('/')[-1].replace('cg', 'aa').replace('pdb', 'nc')
+    aa_uni.select_atoms('all').write(out_traj_name, frames='all')
+    np.savez('logprobs_%s.npz'%aa_pdb_file.split('.pdb')[0].split('/')[-1],
+             logprobs=decoded_probs,
+             cginds=np.tile(np.arange(cg_uni.trajectory.n_frames), (n_samples,)),
+            )
+
 
 def run_traj_analysis(arg_list):
     parser = argparse.ArgumentParser(prog='full_protein_decoding.run_traj_analysis',
@@ -903,10 +951,34 @@ def run_dataset_analysis(arg_list):
                            )
 
 
+def run_cg_traj_decoding(arg_list):
+    parser = argparse.ArgumentParser(prog='full_protein_decoding.run_cg_traj_decoding',
+                                     description='Produces an all-atom trajectory and log-probabilities from a CG trajectory',
+                                    )
+    parser.add_argument('aa_pdb_file', help='path to pdb file of full-atom reference configuration')
+    parser.add_argument('cg_pdb_file', help='path to pdb file of a CG configuration')
+    parser.add_argument('cg_traj_file', help='path to CG trajectory file')
+    parser.add_argument('--bat_dir', '-b', help='path to directory containing directories named by residue type with pickled BAT objects')
+    parser.add_argument('--model_dir', '-m', help='path to directory containing trained model directories')
+    parser.add_argument('--n_samples', '-n', type=int, default=1, help='number of decoded samples per frame')
+
+    args = parser.parse_args(arg_list)
+
+    decode_CG_traj(args.aa_pdb_file,
+                   args.cg_pdb_file,
+                   args.cg_traj_file,
+                   bat_dir=args.bat_dir,
+                   model_dir=args.model_dir,
+                   n_samples=args.n_samples,
+                  )
+
+
 if __name__ == '__main__':
     if sys.argv[1] == 'trajectory':
         run_traj_analysis(sys.argv[2:])
     elif sys.argv[1] == 'dataset':
         run_dataset_analysis(sys.argv[2:])
+    elif sys.argv[1] == 'decode':
+        run_cg_traj_decoding(sys.argv[2:])
     else:
         print("Argument \'%s\' unrecognized. For the first argument, select \'trajectory\' or \'dataset\'."%sys.argv[1])
