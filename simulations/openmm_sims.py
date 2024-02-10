@@ -19,7 +19,7 @@ import MDAnalysis as mda
 cg_atoms = '@N,CA,C,O,H,CB,OXT'
 
 
-def convert_tremd_traj(pdb_file, checkpoint_traj_file, replica_info_file, state0_T=300.0*mm.unit.kelvin):
+def convert_tremd_traj(pdb_file, checkpoint_traj_file, replica_info_file, state0_T=300.0*mm.unit.kelvin, out_dir='./'):
     """
     Converts the openmmtools REMD output checkpoint trajectory file to a standard netcdf trajecctory.
     Only pulls out the lowest-temperature replica trajectory (state 0) by deconvoluting state and
@@ -51,13 +51,13 @@ def convert_tremd_traj(pdb_file, checkpoint_traj_file, replica_info_file, state0
     ckpt_dat.close()
 
     # Save energies
-    np.savez('energies_%s_tremd.npz'%out_name, energies=energies)
+    np.savez('%s/energies_%s_tremd.npz'%(out_dir, out_name), energies=energies)
 
     # Create a universe with the pdb as a topology and the trajectory from the positions in memory
     uni = mda.Universe(pdb_file, positions, format=mda.coordinates.memory.MemoryReader)
 
     # Write out the new trajectory
-    uni.select_atoms("all").write("%s_tremd.nc"%out_name, frames="all")
+    uni.select_atoms("all").write("%s/%s_tremd.nc"%(out_dir, out_name), frames="all")
 
 
 def protein_sim(pdb_file,
@@ -65,7 +65,9 @@ def protein_sim(pdb_file,
                 restrain_cg=False,
                 tremd=False,
                 T=300.0,
-                n_steps=10000000):
+                n_steps=10000000,
+                out_dir='./',
+                ):
     """
     Runs simulation in implicit solvent (or vacuum).
     If restrain_cg is True, restrains the CG atoms (mostly backbone).
@@ -130,9 +132,9 @@ def protein_sim(pdb_file,
                                             )
 
         # Add reporter object to manage output
-        reporter = multistate.MultiStateReporter('replica_info_%s.nc'%out_name,
+        reporter = multistate.MultiStateReporter('%s/replica_info_%s.nc'%(out_dir, out_name),
                                                  checkpoint_interval=10,
-                                                 checkpoint_storage='checkpoint_traj_%s.nc'%out_name,
+                                                 checkpoint_storage='%s/checkpoint_traj_%s.nc'%(out_dir, out_name),
                                                 )
 
         # Set up replica exchange simulation
@@ -156,7 +158,12 @@ def protein_sim(pdb_file,
         sim.run()
 
         # Save a trajectory of ONLY the lowest temperature replica in standard netcdf trajectory format
-        convert_tremd_traj(pdb_file, 'checkpoint_traj_%s.nc'%out_name, 'replica_info_%s.nc'%out_name, state0_T=T*mm.unit.kelvin)
+        convert_tremd_traj(pdb_file,
+                           '%s/checkpoint_traj_%s.nc'%(out_dir, out_name),
+                           '%s/replica_info_%s.nc'%(out_dir, out_name),
+                           state0_T=T*mm.unit.kelvin,
+                           out_dir=out_dir
+                          )
 
     else:
         # Set up simulation
@@ -182,7 +189,7 @@ def protein_sim(pdb_file,
         # Note that the reporters here will report energies with the restraint energy included
         # We will want to recompute the energies of just saved configurations without a restraint
         # (with an energy decomposition, possibly) after the simulation is done
-        sim.reporters.append(mmapp.StateDataReporter('%s.txt'%out_name,
+        sim.reporters.append(mmapp.StateDataReporter('%s/%s.txt'%(out_dir, out_name),
                                                      write_freq,
                                                      step=True,
                                                      time=True,
@@ -192,7 +199,7 @@ def protein_sim(pdb_file,
                                                      speed=True,
                                                      )
                             )
-        sim.reporters.append(pmd.openmm.reporters.NetCDFReporter('%s.nc'%out_name,
+        sim.reporters.append(pmd.openmm.reporters.NetCDFReporter('%s/%s.nc'%(out_dir, out_name),
                                                                  write_freq,
                                                                  crds=True,
                                                                  frcs=True,
@@ -210,6 +217,7 @@ def main(arg_list):
     parser.add_argument('--no_implicit', action='store_false', help='turns off implicit solvent to just simulate in vacuum') 
     parser.add_argument('--restrain', action='store_true', help='whether or not to restrain the CG atoms (mostly backbone)')
     parser.add_argument('--tremd', action='store_true', help='whether or not to perform temperature replica exchange')
+    parser.add_argument('--output_dir', '-o', default='./', help='directory where outputs will be written to')
 
     args = parser.parse_args(arg_list)
 
@@ -218,6 +226,7 @@ def main(arg_list):
                 implicit_solvent=args.no_implicit, # Default true; if set, will be false
                 restrain_cg=args.restrain, # Default false, so turns on if set
                 tremd=args.tremd, # Default false, so turns on if set
+                out_dir=args.output_dir,
                )
 
 
