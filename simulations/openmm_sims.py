@@ -19,20 +19,39 @@ import MDAnalysis as mda
 cg_atoms = '@N,CA,C,O,H,CB,OXT'
 
 
-def convert_tremd_traj(pdb_file, checkpoint_traj_file):
+def convert_tremd_traj(pdb_file, checkpoint_traj_file, replica_info_file, state0_T=300.0*mm.unit.kelvin):
     """
     Converts the openmmtools REMD output checkpoint trajectory file to a standard netcdf trajecctory.
-    Only pulls out the lowest-temperature replica trajectory.
+    Only pulls out the lowest-temperature replica trajectory (state 0) by deconvoluting state and
+    replica indices from the replica_info_file. Since already doing this, also prints energies
+    associated with each configuration at the lowest-temperature replica (state 0) in kJ/mol.
     """
     out_name = checkpoint_traj_file.split('.nc')[0].split('/')[-1].split('checkpoint_traj_')[-1]
 
-    # Read in positions from the checkpoint_traj_file
-    with Dataset(checkpoint_traj_file, 'r') as dat:
-        # Pulling out lowest-temperature replica only
-        # Note conversion from nm to Angstroms (MDAnalysis needs this)
-        # And excluding initial configuration
-        # Keep in mind when comparing to energies!
-        positions = 10.0 * dat['positions'][1:, 0, :, :] 
+    # Read in replia information and checkpoint trajectory information
+    # Note will exclude first iteration (starting configuration)
+    rep_info_dat = Dataset(replica_info_file, 'r')
+    ckpt_dat = Dataset(checkpoint_traj_file, 'r')
+    ckpt_freq = rep_info_dat.CheckpointInterval
+    states = rep_info_dat['states'][1::ckpt_freq]
+    energies = rep_info_dat['energies'][1::ckpt_freq]
+    positions = ckpt_dat['positions'][1::]
+
+    # Identify which replica is in state 0 and pull out coordinates and energies from that replica
+    # At end, should go from (N_frames, N_replicas, ...) to just (N_frames, ...)
+    # Note multiplication by kB*T for energies and 10.0 for nm to Angstroms for positions
+    # For energies, only taking energy at zeroth state
+    where_0 = (states == 0)
+    energies = energies[where_0, ...] * mm.unit.MOLAR_GAS_CONSTANT_R * state0_T
+    energies = energies[:, 0].value_in_unit(mm.unit.kilojoules_per_mole)
+    positions = positions[where_0, ...] * 10.0
+
+    # Close datasets
+    rep_info_dat.close()
+    ckpt_dat.close()
+
+    # Save energies
+    np.savez('energies_%s_tremd.npz'%out_name, energies=energies)
 
     # Create a universe with the pdb as a topology and the trajectory from the positions in memory
     uni = mda.Universe(pdb_file, positions, format=mda.coordinates.memory.MemoryReader)
@@ -128,16 +147,16 @@ def protein_sim(pdb_file,
                    reporter,
                    min_temperature=T*mm.unit.kelvin,
                    max_temperature=450.0*mm.unit.kelvin,
-                   n_temperatures=4,
+                   n_temperatures=6,
                   )
-        print('\n Running replicas at temperatures: %s'%str([s.temperature for s in sim._replica_thermodynamic_states]))
+        print('\n Running replicas at temperatures: %s\n'%str([s.temperature for s in sim._thermodynamic_states]))
         equil_time = 1.0 * mm.unit.nanosecond
         equil_steps = int(equil_time / time_step)
         sim.equilibrate(equil_steps // n_steps_per_swap)
         sim.run()
 
         # Save a trajectory of ONLY the lowest temperature replica in standard netcdf trajectory format
-        convert_tremd_traj(pdb_file, 'checkpoint_traj_%s.nc'%out_name)
+        convert_tremd_traj(pdb_file, 'checkpoint_traj_%s.nc'%out_name, 'replica_info_%s.nc'%out_name, state0_T=T*mm.unit.kelvin)
 
     else:
         # Set up simulation
