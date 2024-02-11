@@ -878,7 +878,7 @@ def decode_CG_traj(aa_pdb_file, cg_pdb_file, cg_traj_file, bat_dir='./', model_d
 
     # Loop over frames to get all CG coordinates
     cg_traj = []
-    for frame in cg_uni.trajectory:
+    for frame in cg_uni.trajectory[:10]:
         cg_traj.append(frame.positions.copy())
     cg_traj = np.array(cg_traj)
 
@@ -895,14 +895,42 @@ def decode_CG_traj(aa_pdb_file, cg_pdb_file, cg_traj_file, bat_dir='./', model_d
     decoded_traj = np.concatenate(decoded_traj, axis=0)
     decoded_probs = np.concatenate(decoded_probs, axis=0)
 
-    # Save the decoded trajectory and probabilities
+    # Also obtain energy for every decoded configuration
+    # Including energy decomposition
+    aa_pdb_obj, sim = analysis_tools.sim_from_pdb(aa_pdb_file)
+    pmd_struc = pmd.openmm.load_topology(aa_pdb_obj.topology, system=sim.system, xyz=aa_pdb_obj.positions)
+    decoded_energies = []
+    decoded_decomp = {}
+    for config in decoded_traj:
+        this_energy = analysis_tools.config_energy(config,
+                                                   sim,
+                                                   constrain_H_bonds=True,
+                                                  )
+        decoded_energies.append(this_energy)
+        # Add energy decomposition as well
+        pmd_struc.coordinates = config
+        this_decomp = pmd.openmm.energy_decomposition_system(pmd_struc, sim.system, nrg=mm.unit.kilojoules_per_mole)
+        for key, eng in this_decomp:
+            if key in decoded_decomp:
+                decoded_decomp[key].append(eng)
+            else:
+                decoded_decomp[key] = [eng]
+
+    decoded_energies = np.array(decoded_energies)
+    for key, eng in decoded_decomp.items():
+        decoded_decomp[key] = np.array(eng)
+    decoded_decomp.pop('CMMotionRemover', None)
+
+    # Save the decoded trajectory, probabilities, and energies
     # For the probabilities, also indicate which CG frame the decoded config corresponds to
     aa_uni = mda.Universe(aa_pdb_file, decoded_traj)
     out_traj_name = 'decoded_' + cg_traj_file.split('/')[-1].replace('cg', 'aa').replace('pdb', 'nc')
     aa_uni.select_atoms('all').write(out_traj_name, frames='all')
-    np.savez('logprobs_%s.npz'%aa_pdb_file.split('.pdb')[0].split('/')[-1],
+    np.savez('decoded_logprobs_energies_%s.npz'%aa_pdb_file.split('.pdb')[0].split('/')[-1],
              logprobs=decoded_probs,
+             energies=decoded_energies,
              cginds=np.tile(np.arange(cg_uni.trajectory.n_frames), (n_samples,)),
+             **decoded_decomp,
             )
 
 
@@ -981,4 +1009,4 @@ if __name__ == '__main__':
     elif sys.argv[1] == 'decode':
         run_cg_traj_decoding(sys.argv[2:])
     else:
-        print("Argument \'%s\' unrecognized. For the first argument, select \'trajectory\' or \'dataset\'."%sys.argv[1])
+        print("Argument \'%s\' unrecognized. For the first argument, select \'trajectory\', \'dataset\', or \'decode\'."%sys.argv[1])
