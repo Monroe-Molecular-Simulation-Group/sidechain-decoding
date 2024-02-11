@@ -299,6 +299,36 @@ def diversity_score(ref_config, configs):
     return raw_score, np.var(bootstrap_resamples)
 
 
+def end_end_distance(pdb_file, traj_file):
+    """
+    Computes end-to-end distance with MDAnalysis for a trajectory.
+    """
+    from MDAnalysis.analysis import atomicdistances
+    uni = mda.Universe(pdb_file, traj_file)
+    ca_res_first = uni.select_atoms('resid 1 and name CA')
+    ca_res_last = uni.select_atoms('resid %i and name CA'%len(uni.residues))
+    dist_obj = atomicdistances.AtomicDistances(ca_res_first, ca_res_last, pbc=False)
+    dist_obj.run()
+    end_end_dist = dist_obj.results[:, 0]
+    return end_end_dist
+
+
+def rmsd_from_native(pdb_file, traj_file):
+    """
+    Given a pdb of the native structure and a trjectory, uses MDAnalysis to compute RMSD for all frames.
+    (only considers the backbone for computing RMSD)
+    """
+    from MDAnalysis.analysis import rms
+    ref_uni = mda.Universe(pdb_file, pdb_file)
+    ref_bb_atoms = ref_uni.select_atoms('backbone')
+    uni = mda.Universe(pdb_file, traj_file)
+    bb_atoms = uni.select_atoms('backbone')
+    rmsd_obj = rms.RMSD(bb_atoms, reference=ref_bb_atoms)
+    rmsd_obj.run()
+    rmsd = rmsd_obj.results.rmsd[:, -1]
+    return rmsd
+
+
 # Need to add arguments --include_cg and --h_bonds analagously to train_model
 def analyze_model(arg_list):
     """
