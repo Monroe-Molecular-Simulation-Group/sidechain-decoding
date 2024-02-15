@@ -2,10 +2,11 @@
 #SBATCH --job-name=train
 #SBATCH --output=%x_%a.out
 #SBATCH --partition agpu72
+#SBATCH --qos gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=64
 #SBATCH --time=72:00:00
-#SBATCH --array=9,10,15,16,18-26
+#SBATCH --array=0-26
 
 echo "Starting time is $(date)"
 

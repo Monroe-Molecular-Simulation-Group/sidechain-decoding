@@ -878,7 +878,7 @@ def decode_CG_traj(aa_pdb_file, cg_pdb_file, cg_traj_file, bat_dir='./', model_d
 
     # Loop over frames to get all CG coordinates
     cg_traj = []
-    for frame in cg_uni.trajectory[:10]:
+    for frame in cg_uni.trajectory:
         cg_traj.append(frame.positions.copy())
     cg_traj = np.array(cg_traj)
 

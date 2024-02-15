@@ -98,7 +98,7 @@ def protein_sim(pdb_file,
         # With the spring constant of 200000.0 kJ/mol*nm^2, restraining a hydrogen of mass 1.008 g/mol
         # results in a period of oscillation of 2*pi*sqrt(m/k) ~ 0.014 ps
         # This is a very stiff restraint, limiting motion to around 0.05 Angstroms at 2*kB*T with T=300 K
-        # Note use of 0.0005 ps timestep, which is smaller than typical for protein simulations
+        # Note use of 0.001 ps timestep, which is smaller than typical for protein simulations
         restraint = mm.CustomExternalForce('k*((x-x0)^2+(y-y0)^2+(z-z0)^2)')
         system.addForce(restraint)
         restraint.addGlobalParameter('k', 200000.0*mm.unit.kilojoules_per_mole/(mm.unit.nanometer**2))
@@ -109,8 +109,8 @@ def protein_sim(pdb_file,
         for a in pdb.topology.atoms():
             if a.name in restrain_names:
                 restraint.addParticle(a.index, pdb.positions[a.index])
-        time_step = 0.0005 * mm.unit.picosecond
-        write_freq = 20000
+        time_step = 0.001 * mm.unit.picosecond
+        write_freq = 10000
     else:
         time_step = 0.002 * mm.unit.picosecond
         write_freq = 5000
@@ -131,30 +131,40 @@ def protein_sim(pdb_file,
                                              constraint_tolerance=1e-06,
                                             )
 
+        # If already have started run, check and load, otherwise set up
+        # Check here before file gets created by reporter
+        if os.path.exists('%s/replica_info_%s.nc'%(out_dir, out_name)):
+            do_restart = True
+
         # Add reporter object to manage output
         reporter = multistate.MultiStateReporter('%s/replica_info_%s.nc'%(out_dir, out_name),
                                                  checkpoint_interval=10,
                                                  checkpoint_storage='%s/checkpoint_traj_%s.nc'%(out_dir, out_name),
                                                 )
 
-        # Set up replica exchange simulation
-        sim = multistate.ParallelTemperingSampler(mcmc_moves=mc_moves,
-                                                  number_of_iterations=n_steps//n_steps_per_swap,
-                                                  online_analysis_interval=None,
-                                                 )
+        if do_restart:
+            sim = multistate.ParallelTemperingSampler.from_storage(reporter)
+
+        else:
+            # Set up replica exchange simulation
+            sim = multistate.ParallelTemperingSampler(mcmc_moves=mc_moves,
+                                                      number_of_iterations=n_steps//n_steps_per_swap,
+                                                      online_analysis_interval=None,
+                                                     )
        
-        # Create simulation, equilibrate, then run
-        sim.create(ref_state,
-                   states.SamplerState(pdb.positions),
-                   reporter,
-                   min_temperature=T*mm.unit.kelvin,
-                   max_temperature=450.0*mm.unit.kelvin,
-                   n_temperatures=6,
-                  )
-        print('\n Running replicas at temperatures: %s\n'%str([s.temperature for s in sim._thermodynamic_states]))
-        equil_time = 1.0 * mm.unit.nanosecond
-        equil_steps = int(equil_time / time_step)
-        sim.equilibrate(equil_steps // n_steps_per_swap)
+            # Create simulation, equilibrate, then run
+            sim.create(ref_state,
+                       states.SamplerState(pdb.positions),
+                       reporter,
+                       min_temperature=T*mm.unit.kelvin,
+                       max_temperature=450.0*mm.unit.kelvin,
+                       n_temperatures=6,
+                      )
+            print('\n Running replicas at temperatures: %s\n'%str([s.temperature for s in sim._thermodynamic_states]))
+            equil_time = 1.0 * mm.unit.nanosecond
+            equil_steps = int(equil_time / time_step)
+            sim.equilibrate(equil_steps // n_steps_per_swap)
+
         sim.run()
 
         # Save a trajectory of ONLY the lowest temperature replica in standard netcdf trajectory format
