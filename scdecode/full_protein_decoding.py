@@ -718,12 +718,12 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
         # Get information on pmd structure now, including bond mask
         num_res.append(len(pmd_struc.residues))
         num_atoms.append(len(pmd_struc.atoms))
-        this_bond_mask = analysis_tools.get_bond_mask(pmd_struc, nb_cut=1)
+        this_bond_mask = analysis_tools.get_bonded_mask(pmd_struc, nb_cut=3)
 
         # Helpful to have a structure without hydrogens as well
         pmd_struc_noH = pmd_struc['!(@H=)']
         noH_inds = [a.idx for a in pmd_struc.view['!(@H=)'].atoms]
-        this_bond_mask_noH = analysis_tools.get_bond_mask(pmd_struc_noH, nb_cut=1)
+        this_bond_mask_noH = analysis_tools.get_bonded_mask(pmd_struc_noH, nb_cut=3)
 
         # Get coordination of all residues
         this_res_coordination = analysis_tools.residue_coordination(pmd_struc['@CA'].coordinates)

@@ -23,8 +23,12 @@ export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:$LD_LIBRARY_PATH
 inputdir="/storage/jm217/data_Sidechain_Decoding/energy_min_training_inputs"
 modeldir="${HOME}/Sidechain_Decoding/logprob_trained_models"
 
-# python -m scdecode.full_protein_decoding trajectory ~/Sidechain_Decoding/simulations/1UAO.pdb ~/Sidechain_Decoding/simulations/openmm_restrained/1UAO_restrained.nc -b $inputdir -m $modeldir
+# python -m scdecode.full_protein_decoding trajectory ~/Sidechain_Decoding/simulations/1UAO.pdb ~/Sidechain_Decoding/simulations/openmm_restrained/1UAO/1UAO_restrained.nc -b $inputdir -m $modeldir
+
+# python -m scdecode.full_protein_decoding trajectory ~/Sidechain_Decoding/simulations/1UAO.pdb ~/Sidechain_Decoding/simulations/openmm_tremd/1UAO/1UAO_tremd.nc -b $inputdir -m $modeldir
 
 python -m scdecode.full_protein_decoding dataset ~/Sidechain_Decoding/Jones_PDB_test_pdbs/energy_min_pdbs -b $inputdir -m $modeldir
+
+# python -m scdecode.full_protein_decoding decode ~/Sidechain_Decoding/simulations/1UAO.pdb ~/Sidechain_Decoding/simulations/pyrosetta/1UAO/cg_traj_1UAO.pdb ~/Sidechain_Decoding/simulations/pyrosetta/1UAO/cg_traj_1UAO.pdb -b $inputdir -m $modeldir -n 10
 
 echo "Ended at time $(date)"
