@@ -240,14 +240,49 @@ def has_clashes(res_atoms, other_atoms, cutoff=1.2):
     return int(np.any(cut_bool))
 
 
-def clash_score(configs, cutoff=1.2, higher_cut=5.0):
+def get_bonded_mask(pmd_struc, nb_cut=0):
+    """
+    Creates a mask of whether or not an atom is within nb_cut bonds of other atoms.
+    Input is a ParmEd structure. Note that nb_cut can only be 0, 1, 2, or 3 since 
+    that covers atom itself, bond partners, angle partners, and dihedral partners.
+    """
+    if nb_cut > 3:
+        "WARNING: Cannot consider more than 3 bond partners to exclude, setting to 3 (dihedrals)."
+        nb_cut = 3
+
+    # Get list of atoms within bond cutoff for each atom in the ParmEd structure
+    bonded_atom_inds = []
+    for atom in pmd_struc.atoms:
+        to_consider = [atom,]
+        if nb_cut >= 1:
+            to_consider.extend(atom.bond_partners)
+        if nb_cut >= 2:
+            to_consider.extend(atom.angle_partners)
+        if nb_cut == 3:
+            to_consider.extend(atom.dihedral_partners)
+        bonded_atom_inds.append([a.idx for a in to_consider])
+
+    # Create mask
+    mask = np.ones((len(pmd_struc.atoms), len(pmd_struc.atoms)), dtype=bool)
+    for i, inds in enumerate(bonded_atom_inds):
+        mask[i, inds] = False # Exclude only the bonded atoms
+
+    return mask
+
+
+def clash_score(configs, cutoff=1.2, higher_cut=5.0, bond_mask=None):
     """
     Computes clash score, but instead of as a fraction of residues with clashes, as a fraction
     of atoms within 5 Angstroms of each other, which is in line with the original description
     in Yang, 2023 and the code for Jones, 2023.
     Returns score and number of distances within each cutoff (so can recompute).
+    BUT, should exclude atoms with bonds, so need optional mask of N_atoms x N_atoms.
+    Can create this mask with get_bonded_mask.
+    NEED MASK EVEN TO EXCLUDE ATOMS FROM THEMSELVES!
     """
     dist_sq_mat = np.sum((configs[:, None, :, :] - configs[:, :, None, :])**2, axis=-1)
+    if bond_mask is not None:
+        dist_sq_mat = dist_sq_mat[:, bond_mask] # Flattens, but that's ok
     within_cut = np.sum(dist_sq_mat < (cutoff**2))
     within_max = np.sum(dist_sq_mat < (higher_cut**2))
     return within_cut/within_max, within_cut, within_max

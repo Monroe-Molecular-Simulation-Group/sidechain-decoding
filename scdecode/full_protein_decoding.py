@@ -715,12 +715,15 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
         this_pdb_obj, this_sim = analysis_tools.sim_from_pdb(file)
         pmd_struc = pmd.openmm.load_topology(this_pdb_obj.topology, system=this_sim.system, xyz=this_pdb_obj.positions)
 
+        # Get information on pmd structure now, including bond mask
         num_res.append(len(pmd_struc.residues))
         num_atoms.append(len(pmd_struc.atoms))
+        this_bond_mask = analysis_tools.get_bond_mask(pmd_struc, nb_cut=1)
 
         # Helpful to have a structure without hydrogens as well
         pmd_struc_noH = pmd_struc['!(@H=)']
         noH_inds = [a.idx for a in pmd_struc.view['!(@H=)'].atoms]
+        this_bond_mask_noH = analysis_tools.get_bond_mask(pmd_struc_noH, nb_cut=1)
 
         # Get coordination of all residues
         this_res_coordination = analysis_tools.residue_coordination(pmd_struc['@CA'].coordinates)
@@ -770,10 +773,10 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
 
         # Get bond, clash, and diversity scores now (just need generated configurations and reference)
         bond_score_stats.append(analysis_tools.bond_score(pmd_struc.topology, pmd_struc.coordinates, gen_configs))
-        clash_score_stats.append(analysis_tools.clash_score(gen_configs))
+        clash_score_stats.append(analysis_tools.clash_score(gen_configs, bond_mask=this_bond_mask))
         diversity_score_stats.append(analysis_tools.diversity_score(pmd_struc.coordinates, gen_configs))
         bond_score_noH_stats.append(analysis_tools.bond_score(pmd_struc_noH.topology, pmd_struc_noH.coordinates, gen_configs[:, noH_inds, :]))
-        clash_score_noH_stats.append(analysis_tools.clash_score(gen_configs[:, noH_inds, :]))
+        clash_score_noH_stats.append(analysis_tools.clash_score(gen_configs[:, noH_inds, :], bond_mask=this_bond_mask_noH))
         diversity_score_noH_stats.append(analysis_tools.diversity_score(pmd_struc_noH.coordinates, gen_configs[:, noH_inds, :]))
 
         # Obtain energies, forces and decompositions of decoded configurations
