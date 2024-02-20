@@ -647,6 +647,13 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
         this_hists, this_edges = analysis_tools.build_bat_histograms(bat_analysis.results.bat[:, 9:])
         np.savez('decoded_BAT_stats_%s%i.npz'%(res_type, i+1), **this_hists, **this_edges)
 
+    # Also a good idea to save the decoded configurations (can then use for re-weighting properties computed from them
+    # along with energies and log-probabilities)
+    # Note that will reweight with non-restrained energy, assuming that restraint effectively constrains backbone configuration
+    # (or that backbone configs can be drawn from a Gaussian distribution exactly that cancels with restrained probability)
+    out_traj_name = 'decoded_' + traj_file.split('/')[-1].split('.')[0] + '.nc'
+    decoded_uni.select_atoms('all').write(out_traj_name, frames='all')
+
 
 def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='dataset_decoding_analysis', n_samples=100):
     """
