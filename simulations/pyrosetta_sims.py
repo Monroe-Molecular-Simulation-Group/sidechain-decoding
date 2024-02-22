@@ -114,8 +114,9 @@ def cg_protein_sim(pdb_file, n_steps=10000000, write_freq=1000):
     # But also will be interesting to have deterministically backmapped configs
     fa_switch = pyrosetta.SwitchResidueTypeSetMover("fa_standard")
 
-    # Define the energy function
-    cen_sfxn = pyrosetta.create_score_function("score3")
+    # Define the energy function, adding Ramachandran potential to standard centroid force field
+    cen_sfxn = pyrosetta.create_score_function("cen_std")
+    cen_sfxn.set_weight(pyrosetta.rosetta.core.scoring.ScoreType.rama, 1.0)
 
     # Set up our MC simulation, starting with a move map
     # Make it so that all backbone degrees of freedom can be moved
@@ -135,13 +136,13 @@ def cg_protein_sim(pdb_file, n_steps=10000000, write_freq=1000):
     small_mover = pyrosetta.rosetta.protocols.simple_moves.SmallMover(move_map, kT, 5)
     small_mover.set_preserve_detailed_balance(True)
     small_mover.scorefxn(cen_sfxn)
-    small_mover.angle_max(15.0) # Gets just under 60% acceptance on 1UAO
+    small_mover.angle_max(10.0) # Achieves just under 50% acceptance 
 
     # Do some for creation of "shear" moves to perturb dihedrals in correlated fashion
     shear_mover = pyrosetta.rosetta.protocols.simple_moves.ShearMover(move_map, kT, 5)
     shear_mover.set_preserve_detailed_balance(True)
     shear_mover.scorefxn(cen_sfxn)
-    shear_mover.angle_max(20.0) # Gets just over 60% acceptance on 1UAO
+    shear_mover.angle_max(15.0)  # Achieves just over 70% acceptance
 
     # Combine the small and shear movers so randomly pick each 50% of the time
     random_mover = pyrosetta.rosetta.protocols.moves.RandomMover()
