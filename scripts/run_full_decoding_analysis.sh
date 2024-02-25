@@ -5,7 +5,7 @@
 #SBATCH --qos gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=64
-#SBATCH --time=24:00:00
+#SBATCH --time=72:00:00
 
 echo "Starting time is $(date)"
 
@@ -27,8 +27,8 @@ modeldir="${HOME}/Sidechain_Decoding/logprob_trained_models"
 
 # python -m scdecode.full_protein_decoding trajectory ~/Sidechain_Decoding/simulations/1UAO.pdb ~/Sidechain_Decoding/simulations/openmm_tremd/1UAO/1UAO_tremd.nc -b $inputdir -m $modeldir
 
-python -m scdecode.full_protein_decoding dataset ~/Sidechain_Decoding/Jones_PDB_test_pdbs/energy_min_pdbs -b $inputdir -m $modeldir
+# python -m scdecode.full_protein_decoding dataset ~/Sidechain_Decoding/Jones_PDB_test_pdbs/energy_min_pdbs -b $inputdir -m $modeldir
 
-# python -m scdecode.full_protein_decoding decode ~/Sidechain_Decoding/simulations/1UAO.pdb ~/Sidechain_Decoding/simulations/pyrosetta/1UAO/cg_traj_1UAO.pdb ~/Sidechain_Decoding/simulations/pyrosetta/1UAO/cg_traj_1UAO.pdb -b $inputdir -m $modeldir -n 10
+python -m scdecode.full_protein_decoding decode ~/Sidechain_Decoding/simulations/1UAO.pdb ~/Sidechain_Decoding/simulations/pyrosetta/1UAO/cg_traj_1UAO.pdb ~/Sidechain_Decoding/simulations/pyrosetta/1UAO/cg_traj_1UAO.pdb -b $inputdir -m $modeldir -n 5
 
 echo "Ended at time $(date)"
