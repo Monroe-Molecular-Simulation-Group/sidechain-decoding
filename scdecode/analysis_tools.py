@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import openmm as mm
 import parmed as pmd
 import MDAnalysis as mda
+import mdtraj
 
 import vaemolsim
 
@@ -228,18 +229,6 @@ def residue_burial(res_sites, cutoff=10.0, buried_num=4):
     return buried_res
 
 
-def has_clashes(res_atoms, other_atoms, cutoff=1.2):
-    """
-    To find the clash score, (Yang, 2023 and Jones, 2023) defined as the fraction
-    of residues with atoms within 0.12 nm (1.2 Angstroms) of atoms of other residues,
-    identify the number of residues experiencing clashes here for all configurations.
-    Inputs should be arrays of (N_atoms, 3).
-    """
-    dist_sq_mat = np.sum((other_atoms[None, :, :] - res_atoms[:, None, :])**2, axis=-1)
-    cut_bool = dist_sq_mat < (cutoff**2)
-    return int(np.any(cut_bool))
-
-
 def get_bonded_mask(pmd_struc, nb_cut=0):
     """
     Creates a mask of whether or not an atom is within nb_cut bonds of other atoms.
@@ -274,7 +263,7 @@ def clash_score(configs, cutoff=1.2, higher_cut=5.0, bond_mask=None):
     """
     Computes clash score, but instead of as a fraction of residues with clashes, as a fraction
     of atoms within 5 Angstroms of each other, which is in line with the original description
-    in Yang, 2023 and the code for Jones, 2023.
+    in Yang, 2023..
     Returns score and number of distances within each cutoff (so can recompute).
     BUT, should exclude atoms with bonds, so need optional mask of N_atoms x N_atoms.
     Can create this mask with get_bonded_mask.
@@ -286,6 +275,50 @@ def clash_score(configs, cutoff=1.2, higher_cut=5.0, bond_mask=None):
     within_cut = np.sum(dist_sq_mat < (cutoff**2))
     within_max = np.sum(dist_sq_mat < (higher_cut**2))
     return within_cut/within_max, within_cut, within_max
+
+
+def clash_score_res(trj, thresh=0.12, Ca_cut=2.0, include_H=False):
+    """
+    Residue-based clash score adapted from Jones, 2023 (https://github.com/Ferg-Lab/DiAMoNDBack/blob/237fc5f4b08feadf15bd1b5a7040392e0e22bcac/scripts/utils.py#L1139)
+    Needed to change so that can optionally also consider hydrogens.
+    Also changed to consider full trajectory all at once and output a fraction and the numerator and denominator of it.
+    Note that mdtraj works in nanometers rather than Angstroms.
+    """
+    Ca_idxs = []
+    for i, atom in enumerate(trj.top.atoms):
+        if 'CA' in atom.name:
+            Ca_idxs.append(i)
+    Ca_idxs = np.array(Ca_idxs)
+    Ca_xyzs = trj.xyz[0, Ca_idxs]
+    n_res = trj.n_residues
+    pairs = []
+    for i in range(n_res):
+        for j in range(i-1):
+            if np.linalg.norm(Ca_xyzs[i]-Ca_xyzs[j]) < Ca_cut:
+                pairs.append((i, j))
+
+    if include_H:
+        dist, pairs = mdtraj.compute_contacts(trj, contacts=pairs, scheme='closest')
+        neighbor_pairs = [(i, i+1) for i in range(trj.n_residues-1)]
+        neighbor_dist, neighbor_pairs = mdtraj.compute_contacts(trj, contacts=neighbor_pairs, scheme='sidechain')
+    else:
+        dist, pairs = mdtraj.compute_contacts(trj, contacts=pairs, scheme='closest-heavy')
+        neighbor_pairs = [(i, i+1) for i in range(trj.n_residues-1) if (
+            trj.top.residue(i).name != 'GLY' and trj.top.residue(i+1).name != 'GLY')]
+        neighbor_dist, neighbor_pairs = mdtraj.compute_contacts(trj, contacts=neighbor_pairs, scheme='sidechain-heavy')
+    
+    dist = np.concatenate([dist, neighbor_dist], axis=-1)
+    pairs = np.concatenate([pairs, neighbor_pairs], axis=0)
+    res_closes = list()
+    for n_res in range(trj.top.n_residues):
+        pair_mask = np.array([n_res in i for i in pairs])
+        res_close = np.any(dist[:, pair_mask] < thresh, axis=1)
+        res_closes.append(res_close)
+    res_closes = np.array(res_closes)
+    within_cut = np.sum(res_closes)
+    tot_considered = res_closes.size
+    
+    return within_cut/tot_considered, within_cut, tot_considered
 
 
 def bond_score(topology, ref_config, configs, cutoff=0.10):
