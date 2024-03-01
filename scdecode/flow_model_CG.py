@@ -30,12 +30,25 @@ def build_flow_model(n_atoms, n_H_bonds=0, hidden_dim=100):
     # So n_atoms is really the number of non-root atoms
     latent_dist = tfp.layers.DistributionLambda(make_distribution_fn=lambda t: tfp.distributions.Blockwise(
         [tfp.distributions.Normal(loc=tf.zeros((tf.shape(t)[0],)),
-                                  scale=0.5*tf.ones((tf.shape(t)[0],)))] * (3 + 2 * n_atoms - n_H_bonds)
+                                  scale=tf.ones((tf.shape(t)[0],)))] * (3 + 2 * n_atoms - n_H_bonds)
         + [tfp.distributions.VonMises(loc=tf.zeros((tf.shape(t)[0],)),
                                   concentration=tf.ones((tf.shape(t)[0],)))] * n_atoms)
         )
 
     # Define the flow
+    # Start with transformations to make sure flow operates on domain [-np.pi, np.pi]
+    # But have some "bonds" to CG beads that are outside this, so sample those from normal on [-10, 10]
+    # and map to [-np.pi, np.pi] for just the flow, then go back
+    before_trans = vaemolsim.flows.make_domain_transform([[-10, 10]] * (3 + 2 * n_atoms - n_H_bonds)
+                                                         + [[-np.pi, np.pi]] * n_atoms,
+                                                         [-np.pi, np.pi],
+                                                         from_target=False,
+                                                         )
+    after_trans = vaemolsim.flows.make_domain_transform([[-10, 10]] * (3 + 2 * n_atoms - n_H_bonds)
+                                                         + [[-np.pi, np.pi]] * n_atoms,
+                                                         [-np.pi, np.pi],
+                                                         from_target=True,
+                                                         )
     flow = vaemolsim.flows.RQSSplineMAF(num_blocks=5,
                                         order_seed=42,
                                         rqs_params={'bin_range': [-np.pi, np.pi],
@@ -43,6 +56,8 @@ def build_flow_model(n_atoms, n_H_bonds=0, hidden_dim=100):
                                                     'hidden_dim': hidden_dim,
                                                     'conditional': False},
                                         batch_norm=False,
+                                        before_flow_transform=before_trans,
+                                        after_flow_transform=after_trans,
                                         )
     model = vaemolsim.models.FlowModel(flow, latent_dist)
     _ = model.flowed_dist.flow(tf.ones([1, 3 + n_atoms * 3 - n_H_bonds])) # Build flow
@@ -134,14 +149,70 @@ def train_flow_model(pdb_file, traj_file, save_dir='./', constrain_H_bonds=False
     np.savez(os.path.join(save_dir, '%s_CG_flow_history.npz'%out_name), **history.history)
 
 
-def sample_flow_model(bat_obj, model_dir, save_dir='./', n_samples=1000, constrain_H_bonds=False):
-    # will want to load in model based on bat_obj like when training
-    # Can put together dummy set of inputs in right shape to call predict
-    # Once have all samples from predict, can call log_prob on all of them with model.flowed_dist.log_prob()
-    # Save the log-probabilities
-    # Will want to then fill in h-bonds, save BAT sample, combine with first 6 DoFs, convert to XYZ and save
-    # For xyz, save in trajectory format like .nc for compatibility with decoding in full_protein_decoding
-    pass 
+def sample_flow_model(bat_file, model_ckpt, pdb_file, save_dir='./', n_samples=1000, constrain_H_bonds=False):
+    """
+    Draw a CG sample from a trained flow model.
+    """
+    out_name = pdb_file.split('.pdb')[0].split('/')[-1]
+   
+    # Load in BAT object
+    with open(bat_file, 'rb') as f:
+        bat_obj = pickle.load(f)
+
+    # Get number of (non-root) atoms and information on bonds involving hydrogens
+    n_atoms = len(bat_obj._torsions)
+    if constrain_H_bonds:
+        h_inds, non_h_inds, h_bond_lengths = coord_transforms.get_h_bond_info(bat_obj)
+        # Above assumes excluding first 9 BAT DoFs, so must add 3 to all indices
+        # Root atoms should be heavy atoms, not hydrogens
+        h_inds = [i + 3 for i in h_inds]
+        non_h_inds = [0, 1, 2] + [i + 3 for i in non_h_inds]
+        n_H_bonds = len(h_inds)
+    else:
+        n_H_bonds = 0
+
+    # Build the model
+    model = build_flow_model(n_atoms, n_H_bonds=n_H_bonds)
+
+    # Compile
+    model.compile(tf.keras.optimizers.Adam(),
+                  loss=vaemolsim.losses.LogProbLoss()
+                  )
+
+    # Create fake input for predict method, which will sample from flow model
+    inputs = tf.ones((n_samples, len(non_h_inds)))
+
+    # Build and load weights
+    _ = model(inputs[:2])
+    model.load_weights(model_ckpt).expect_partial()
+    
+    # Run predict step to generate samples
+    samples = model.predict(inputs, batch_size=256, verbose=2)
+
+    # Run evaluate on samples to get negative log-probabilities
+    log_probs = model.flowed_dist(inputs).log_prob(samples)
+
+    # Save log-probabilities
+    np.save('CG_log_probs_%s.npy'%out_name, log_probs.numpy())
+
+    # Fill in hydrogens
+    samples = coord_transforms.fill_in_h_bonds_tf(samples, h_inds, non_h_inds, h_bond_lengths)
+
+    # Add on rigid translation and rotation components
+    samples = tf.concat([tf.tile(tf.cast(bat_obj.results.bat[:1, :6], tf.float32), (samples.shape[0], 1)),
+                         samples],
+                        axis=1)
+
+    # Save just BAT samples
+    np.save('gen_CG_BAT_traj_%s.npy'%out_name, samples.numpy())
+
+    # Convert to XYZ coordinates
+    xyz_samples = coord_transforms.bat_cartesian_tf(samples, bat_obj)
+
+    # For XYZ, save in trajectory-style format
+    pmd_struc = pmd.load_file(pdb_file)
+    pmd_struc.coordinates = xyz_samples.numpy()
+    pmd_struc.save('gen_CG_traj_%s.pdb'%out_name)
 
 
 def main_train(arg_list):
@@ -172,16 +243,19 @@ def main_sample(arg_list):
                                      description='Loads a trained model and samples from it'
                                      )
     parser.add_argument('bat_file', help='path to BAT analysis object file')
-    parser.add_argument('model_dir', help='directory where model is saved')
+    parser.add_argument('model_ckpt', help='model checkpoint file name')
+    parser.add_argument('pdb_file', help='pdb or structure file of CG representation')
     parser.add_argument('--save_dir', '-s', default='./', help='directory to save outputs to')
-    parser.add_argument('--n_samples', '-n', default=100000, help='number of samples to draw')
+    parser.add_argument('--n_samples', '-n', type=int, default=100000, help='number of samples to draw')
     parser.add_argument('--h_bonds', action='store_true', help='whether or not to constrain bonds with hydrogens')
 
     args = parser.parse_args(arg_list)
 
-    sample_flow_model(args.pdb_file,
-                     args.traj_file,
+    sample_flow_model(args.bat_file,
+                     args.model_ckpt,
+                     args.pdb_file,
                      save_dir=args.save_dir,
+                     n_samples=args.n_samples,
                      constrain_H_bonds=args.h_bonds,
                     )
 
