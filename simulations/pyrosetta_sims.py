@@ -45,7 +45,7 @@ def convert_to_CG_traj(centroid_pdb_files, aa_pdb_files):
     res_list = pmd.ResidueList()
     atom_list = pmd.AtomList()
     for i, res in enumerate(aa_struc.residues):
-        res_list.add_atom(pmd.Atom(name='CG', type=res.name), 'SC%s'%res.name, i + 1, 'A')
+        res_list.add_atom(pmd.Atom(name='SC', type=res.name), res.name, i + 1)
         atom_list.append(res_list[i].atoms[0])
 
     # Create just sidechain bead structure
