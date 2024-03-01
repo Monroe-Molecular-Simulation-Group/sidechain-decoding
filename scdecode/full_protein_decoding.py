@@ -787,11 +787,11 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
         # Get bond, clash, and diversity scores now (just need generated configurations and reference)
         bond_score_stats.append(analysis_tools.bond_score(pmd_struc.topology, pmd_struc.coordinates, gen_configs))
         clash_score_stats.append(analysis_tools.clash_score(gen_configs, bond_mask=this_bond_mask))
-        clash_score_res_stats.append(analysis_tools.clash_score_res(mdtraj.Trajectory(gen_configs/10.0, md_top), include_H=False))
+        clash_score_res_stats.append(analysis_tools.clash_score_res(mdtraj.Trajectory(gen_configs/10.0, md_top), include_H=True))
         diversity_score_stats.append(analysis_tools.diversity_score(pmd_struc.coordinates, gen_configs))
         bond_score_noH_stats.append(analysis_tools.bond_score(pmd_struc_noH.topology, pmd_struc_noH.coordinates, gen_configs[:, noH_inds, :]))
         clash_score_noH_stats.append(analysis_tools.clash_score(gen_configs[:, noH_inds, :], bond_mask=this_bond_mask_noH))
-        clash_score_res_noH_stats.append(analysis_tools.clash_score_res(mdtraj.Trajectory(gen_configs/10.0, md_top), include_H=True))
+        clash_score_res_noH_stats.append(analysis_tools.clash_score_res(mdtraj.Trajectory(gen_configs/10.0, md_top), include_H=False))
         diversity_score_noH_stats.append(analysis_tools.diversity_score(pmd_struc_noH.coordinates, gen_configs[:, noH_inds, :]))
 
         # Obtain energies, forces and decompositions of decoded configurations
