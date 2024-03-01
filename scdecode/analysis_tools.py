@@ -182,7 +182,7 @@ def create_cg_structure(pmd_struc, mda_uni=None):
         cg_pos = map_to_cg_configs(mda.Universe(pmd_struc))
     else:
         cg_pos = map_to_cg_configs(mda_uni)
- 
+
     # Get atoms present in CG structure
     cg_struc = pmd_struc[data_io.cg_atoms]
 
@@ -203,6 +203,9 @@ def create_cg_structure(pmd_struc, mda_uni=None):
 
     # Set all coordinates from trajectory if have them
     cg_struc.coordinates = cg_pos
+
+    # Set up so does not indicate changes
+    cg_struc.unchange()
 
     return cg_struc
 
