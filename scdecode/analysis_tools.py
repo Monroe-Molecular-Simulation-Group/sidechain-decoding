@@ -185,27 +185,26 @@ def create_cg_structure(pmd_struc, mda_uni=None):
  
     # Get atoms present in CG structure
     cg_struc = pmd_struc[data_io.cg_atoms]
- 
-    # Loop over residues and create residue and atom lists
-    res_list = pmd.ResidueList()
-    atom_list = pmd.AtomList()
-    for i, res in enumerate(pmd_struc.residues):
-        res_list.add_atom(pmd.Atom(name='CG', type=res.name), 'SC%s'%res.name, i + 1, 'A')
-        atom_list.append(res_list[i].atoms[0])
 
-    # Create just sidechain bead structure
-    sc_beads = pmd.Structure()
-    sc_beads.residues = res_list
-    sc_beads.atoms = atom_list
-    sc_beads.coordinates = cg_pos[0, -len(pmd_struc.residues):, :]
-    
-    # Combine CG atoms and CG sidechain beads
-    combined_struc = cg_struc + sc_beads
+    # Loop over residues and add CG atoms to them
+    for i, res in enumerate(cg_struc.residues):
+        this_cg_atom = pmd.Atom(name='SC', type=res.name)
+        res.add_atom(this_cg_atom)
+        # Add bond from beta carbon to CG bead unless residue is glycine
+        if res.name == 'GLY':
+            bond_atom = [a for a in res.atoms if a.name == 'CA'][0]
+        else:
+            bond_atom = [a for a in res.atoms if a.name == 'CB'][0]
+        # Note adding CG atoms to END of atom list, not close to other atoms in residue
+        # This makes it easier to find CG beads even without atom names
+        cg_struc.atoms.append(this_cg_atom)
+        this_bond = pmd.Bond(this_cg_atom, bond_atom)
+        cg_struc.bonds.append(this_bond) 
 
     # Set all coordinates from trajectory if have them
-    combined_struc.coordinates = cg_pos
+    cg_struc.coordinates = cg_pos
 
-    return combined_struc
+    return cg_struc
 
 
 def residue_coordination(res_sites, cutoff=10.0):
