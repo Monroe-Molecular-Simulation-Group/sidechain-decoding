@@ -190,10 +190,14 @@ def sample_flow_model(bat_file, model_ckpt, pdb_file, save_dir='./', n_samples=1
     samples = model.predict(inputs, batch_size=256, verbose=2)
 
     # Run evaluate on samples to get negative log-probabilities
-    log_probs = model.flowed_dist(inputs).log_prob(samples)
+    # Do in batches to avoid memory errors
+    n_chunk = 100
+    log_probs = []
+    for i in range(0, samples.shape[0], n_chunk):
+        log_probs.append(model.flowed_dist(inputs[i:i+n_chunk, :]).log_prob(samples[i:i+n_chunk, :]))
 
     # Save log-probabilities
-    np.save('CG_log_probs_%s.npy'%out_name, log_probs.numpy())
+    np.save('CG_log_probs_%s.npy'%out_name, np.array(log_probs))
 
     # Fill in hydrogens
     samples = coord_transforms.fill_in_h_bonds_tf(samples, h_inds, non_h_inds, h_bond_lengths)
