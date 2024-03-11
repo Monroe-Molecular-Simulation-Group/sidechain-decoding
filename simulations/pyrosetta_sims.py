@@ -114,9 +114,12 @@ def cg_protein_sim(pdb_file, n_steps=10000000, write_freq=1000):
     # But also will be interesting to have deterministically backmapped configs
     fa_switch = pyrosetta.SwitchResidueTypeSetMover("fa_standard")
 
-    # Define the energy function, adding Ramachandran potential to standard centroid force field
-    cen_sfxn = pyrosetta.create_score_function("cen_std")
+    # Define the energy function
+    # Using score3, adding RAMA to that, along with omega and p_aa_pp
+    cen_sfxn = pyrosetta.create_score_function("score3")
     cen_sfxn.set_weight(pyrosetta.rosetta.core.scoring.ScoreType.rama, 1.0)
+    cen_sfxn.set_weight(pyrosetta.rosetta.core.scoring.ScoreType.omega, 1.0)
+    cen_sfxn.set_weight(pyrosetta.rosetta.core.scoring.ScoreType.p_aa_pp, 1.0)
 
     # Set up our MC simulation, starting with a move map
     # Make it so that all backbone degrees of freedom can be moved
