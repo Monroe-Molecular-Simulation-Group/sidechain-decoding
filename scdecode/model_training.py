@@ -26,7 +26,7 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
     A loss to enforce mapping of output to CG coordinates in addition to log probability.
     """
 
-    def __init__(self, bat_obj, one_over_cg_var=4.0, mask_H=False, name='log_prob_cg_loss', **kwargs):
+    def __init__(self, bat_obj, one_over_cg_var=4.0, mask_H=False, n_samples=1, name='log_prob_cg_loss', **kwargs):
         """
         Creates loss object.
 
@@ -39,6 +39,8 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
             If set to 0.0, ignores CG penalty term.
         mask_H : bool, default False
             Whether or not to define mask over bonds involving hydrogens.
+        n_samples : int, default 1
+            Number of samples to draw for computing the CG bead location
         """
 
         super(LogProbPenalizedCGLoss, self).__init__(name=name, **kwargs)
@@ -46,6 +48,8 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
         self.bat_obj = bat_obj
 
         self.one_over_cg_var = tf.Variable(one_over_cg_var, trainable=False)
+
+        self.n_samples = n_samples
 
         if mask_H:
             h_inds, non_h_inds, h_bond_lengths = get_h_bond_info(bat_obj)
@@ -93,34 +97,42 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
         # Define inputs
         # List of inputs is more intuitive, but is not possible with how tf.keras.Model handles loss inputs
         full_bat = targets[:, :-3]
-        cg_ref = targets[:, -3:]
+        n_batch = tf.shape(targets)[0]
 
         # Need to pick apart full BAT to compute log-probability correctly
         bat = tf.gather(full_bat[:, 9:], self.non_h_inds, axis=-1)
         log_prob = -decoder.log_prob(bat)
 
         # Now need to sample from the distribution and check CG positions
-        sample = decoder.sample()
+        # sample will be of shape (n_samples, N_batch, N_DOFs)
+        sample = decoder.sample(self.n_samples)
 
         # Insert H-bond values
-        h_bond_vals = tf.tile(tf.reshape(self.h_bond_lengths, (1, -1)), (tf.shape(sample)[0], 1))
+        h_bond_vals = tf.tile(tf.reshape(self.h_bond_lengths, (1, 1, -1)), (self.n_samples, n_batch, 1))
         full_sample = tf.transpose(tf.dynamic_stitch([self.non_h_inds, self.h_inds],
                                                 [tf.transpose(sample), tf.transpose(h_bond_vals)])
                                   )
         
         # Combine predicted values with root positions in target
-        full_sample = tf.concat([full_bat[:, :9], full_sample], axis=-1)
+        full_sample = tf.concat([tf.tile(tf.expand_dims(full_bat[:, :9], axis=0), (self.n_samples, 1, 1)),
+                                 full_sample],
+                                axis=-1)
 
         # Obtain XYZ indices
+        # To make this work with n_samples samples, need to flatten, apply, then reshape back
+        # (after compute CG locations)
+        full_sample = tf.reshape(full_sample, (self.n_samples*n_batch, -1))
         xyz_sample = bat_cartesian_tf(full_sample, self.bat_obj)
 
-        # Compute location of CG reference site
+        # Compute location of CG site
         cg_sample = tf.reduce_sum(self.mass_weights * xyz_sample, axis=1)
+        cg_sample = tf.reshape(cg_sample, (self.n_samples, n_batch, -1))
 
+        cg_ref = tf.tile(tf.expand_dims(targets[:, -3:], axis=0), (self.n_samples, 1, 1)), 
         # Assuming Gaussian distribution, enforce sampled CG close to reference
-        # cg_penalty = tf.reduce_sum(self.one_over_cg_var * (cg_sample - cg_ref)**2 / 2.0, axis=-1)
+        cg_penalty = tf.reduce_mean(tf.reduce_sum(self.one_over_cg_var * 0.5 * (cg_sample - cg_ref)**2, axis=-1), axis=0)
         # Or try a Laplace distribution instead
-        cg_penalty = tf.reduce_sum(self.one_over_cg_var * tf.math.abs(cg_sample - cg_ref), axis=-1)
+        # cg_penalty = tf.reduce_mean(tf.reduce_sum(self.one_over_cg_var * tf.math.abs(cg_sample - cg_ref), axis=-1), axis=0)
 
         return log_prob + cg_penalty
 
