@@ -695,10 +695,12 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
     max_forces_by_res = {}
     decoded_max_forces_by_res = {}
     coordination_by_res = {}
+    cg_diffs_by_res = {}
     for rtype in data_io.ref_res_types:
         max_forces_by_res[rtype] = []
         decoded_max_forces_by_res[rtype] = []
         coordination_by_res[rtype] = []
+        cg_diffs_by_res[rtype] = []
 
     # Other metrics for decoded configurations
     # Will save on a per-protein basis
@@ -781,6 +783,7 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
         cg_config = np.tile(cg_config, (n_samples, 1, 1))
         gen_configs, gen_probs = full_decode.decode_config(cg_config)
         gen_configs = gen_configs.numpy()
+        gen_cg_configs = analysis_tools.map_to_cg_configs(mda.Universe(pmd_struc, gen_configs)) 
         
         decoded_probs.append(gen_probs.numpy())
 
@@ -795,7 +798,7 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
         diversity_score_noH_stats.append(analysis_tools.diversity_score(pmd_struc_noH.coordinates, gen_configs[:, noH_inds, :]))
 
         # Obtain energies, forces and decompositions of decoded configurations
-        for config in gen_configs:
+        for j, config in enumerate(gen_configs):
         
             this_energy, this_forces = analysis_tools.config_energy(config,
                                                                     this_sim,
@@ -804,6 +807,7 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
                                                                     )
             decoded_energies.append(this_energy)
             this_force_mags = np.linalg.norm(this_forces, axis=-1)
+            this_cg_diffs = gen_cg_configs[j, -len(full_decode.sequence):, :] - cg_config[j, -len(full_decode.sequence):, :]
 
             # As loop, will also add coordination
             # That way, make sure that they align with each other
@@ -815,6 +819,7 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
                 atom_mask = np.zeros(config.shape[0], dtype=bool)
                 atom_mask[atom_inds] = True
                 coordination_by_res[res].append(this_res_coordination[i])
+                cg_diffs_by_res[res].append(this_cg_diffs[i, :])
             
             # Add energy decomposition as well
             pmd_struc.coordinates = config
@@ -852,6 +857,10 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
     for key, val in coordination_by_res.items():
         out_coordination_by_res['coordination_'+key] = np.array(val)
 
+    out_cg_diffs_by_res = {}
+    for key, val in cg_diffs_by_res.items():
+        out_cg_diffs_by_res['cg_diffs_'+key] = np.array(val)
+
     # Note that cannot easily compare residue coordination (burial) to reference max forces
     # Can only compare for max forces on decoded residues since those match up
     np.savez('%s.npz'%out_name,
@@ -875,6 +884,7 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
              **out_max_forces_by_res,
              **out_decoded_max_forces_by_res,
              **out_coordination_by_res,
+             **out_cg_diffs_by_res,
             )
 
 def decode_CG_traj(aa_pdb_file, cg_pdb_file, cg_traj_file, bat_dir='./', model_dir='./', n_samples=1):
