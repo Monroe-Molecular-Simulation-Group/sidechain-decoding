@@ -26,7 +26,7 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
     A loss to enforce mapping of output to CG coordinates in addition to log probability.
     """
 
-    def __init__(self, bat_obj, one_over_cg_var=4.0, mask_H=False, n_samples=1, name='log_prob_cg_loss', **kwargs):
+    def __init__(self, bat_obj, one_over_cg_var=4.0, mask_H=False, n_samples=10, name='log_prob_cg_loss', **kwargs):
         """
         Creates loss object.
 
@@ -39,7 +39,7 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
             If set to 0.0, ignores CG penalty term.
         mask_H : bool, default False
             Whether or not to define mask over bonds involving hydrogens.
-        n_samples : int, default 1
+        n_samples : int, default 10
             Number of samples to draw for computing the CG bead location
         """
 
@@ -103,36 +103,41 @@ class LogProbPenalizedCGLoss(tf.keras.losses.Loss):
         bat = tf.gather(full_bat[:, 9:], self.non_h_inds, axis=-1)
         log_prob = -decoder.log_prob(bat)
 
-        # Now need to sample from the distribution and check CG positions
-        # sample will be of shape (n_samples, N_batch, N_DOFs)
-        sample = decoder.sample(self.n_samples)
+        if self.one_over_cg_var == 0.0:
+            # Use if-statement to save time, but also because sampling step is less numerically stable
+            # (has some chance of producing NaN if the variances predicted for von Mises distributions become too small)
+            cg_penalty = 0.0
+        else:
+            # Now need to sample from the distribution and check CG positions
+            # sample will be of shape (n_samples, N_batch, N_DOFs)
+            sample = decoder.sample(self.n_samples)
 
-        # Insert H-bond values
-        h_bond_vals = tf.tile(tf.reshape(self.h_bond_lengths, (1, 1, -1)), (self.n_samples, n_batch, 1))
-        full_sample = tf.transpose(tf.dynamic_stitch([self.non_h_inds, self.h_inds],
-                                                [tf.transpose(sample), tf.transpose(h_bond_vals)])
-                                  )
+            # Insert H-bond values
+            h_bond_vals = tf.tile(tf.reshape(self.h_bond_lengths, (1, 1, -1)), (self.n_samples, n_batch, 1))
+            full_sample = tf.transpose(tf.dynamic_stitch([self.non_h_inds, self.h_inds],
+                                                    [tf.transpose(sample), tf.transpose(h_bond_vals)])
+                                      )
         
-        # Combine predicted values with root positions in target
-        full_sample = tf.concat([tf.tile(tf.expand_dims(full_bat[:, :9], axis=0), (self.n_samples, 1, 1)),
-                                 full_sample],
-                                axis=-1)
+            # Combine predicted values with root positions in target
+            full_sample = tf.concat([tf.tile(tf.expand_dims(full_bat[:, :9], axis=0), (self.n_samples, 1, 1)),
+                                     full_sample],
+                                    axis=-1)
 
-        # Obtain XYZ indices
-        # To make this work with n_samples samples, need to flatten, apply, then reshape back
-        # (after compute CG locations)
-        full_sample = tf.reshape(full_sample, (self.n_samples*n_batch, -1))
-        xyz_sample = bat_cartesian_tf(full_sample, self.bat_obj)
+            # Obtain XYZ indices
+            # To make this work with n_samples samples, need to flatten, apply, then reshape back
+            # (after compute CG locations)
+            full_sample = tf.reshape(full_sample, (self.n_samples*n_batch, -1))
+            xyz_sample = bat_cartesian_tf(full_sample, self.bat_obj)
 
-        # Compute location of CG site
-        cg_sample = tf.reduce_sum(self.mass_weights * xyz_sample, axis=1)
-        cg_sample = tf.reshape(cg_sample, (self.n_samples, n_batch, -1))
+            # Compute location of CG site
+            cg_sample = tf.reduce_sum(self.mass_weights * xyz_sample, axis=1)
+            cg_sample = tf.reshape(cg_sample, (self.n_samples, n_batch, -1))
 
-        cg_ref = tf.tile(tf.expand_dims(targets[:, -3:], axis=0), (self.n_samples, 1, 1)), 
-        # Assuming Gaussian distribution, enforce sampled CG close to reference
-        cg_penalty = tf.reduce_mean(tf.reduce_sum(self.one_over_cg_var * 0.5 * (cg_sample - cg_ref)**2, axis=-1), axis=0)
-        # Or try a Laplace distribution instead
-        # cg_penalty = tf.reduce_mean(tf.reduce_sum(self.one_over_cg_var * tf.math.abs(cg_sample - cg_ref), axis=-1), axis=0)
+            cg_ref = tf.tile(tf.expand_dims(targets[:, -3:], axis=0), (self.n_samples, 1, 1)), 
+            # Assuming Gaussian distribution, enforce sampled CG close to reference
+            cg_penalty = tf.reduce_mean(tf.reduce_sum(self.one_over_cg_var * 0.5 * (cg_sample - cg_ref)**2, axis=-1), axis=0)
+            # Or try a Laplace distribution instead
+            # cg_penalty = tf.reduce_mean(tf.reduce_sum(self.one_over_cg_var * tf.math.abs(cg_sample - cg_ref), axis=-1), axis=0)
 
         return log_prob + cg_penalty
 
@@ -197,13 +202,22 @@ class MeanLogProb(tf.keras.metrics.Metric):
         return self.log_prob_loss / self.count
 
 
-def build_model(n_atoms, n_H_bonds=0, embed_dim=20, hidden_dim=100):
+def build_model(n_atoms, n_H_bonds=0, embed_dim=None, n_particles=150, hidden_dim=100):
     """
     Defines the model that will be used for side-chain decoding
     """
+    # If embedding dimension not specified, select based on the number of heavy atoms
+    # This is the number of atoms minus the number of bonds involving hydrogens
+    # Multiply the number of heavy atoms (+1 so don't have zero for alanine) by 10
+    if embed_dim is None:
+        n_heavy = n_atoms - n_H_bonds
+        embed_dim = 10 * (n_heavy + 1)
+    else:
+        embed_dim = int(embed_dim)
+
     # Define distance-based embedding
-    mask_dist = vaemolsim.mappings.DistanceSelection(8.0, 50) # 8 Angstrom cutoff, no more then 50 particles included
-    particle_embed = vaemolsim.mappings.ParticleEmbedding(embed_dim)
+    mask_dist = vaemolsim.mappings.DistanceSelection(8.0, n_particles) # 8 Angstrom cutoff, no more then n_particles included
+    particle_embed = vaemolsim.mappings.ParticleEmbedding(embed_dim, hidden_dim=embed_dim)
     mask_and_embed = vaemolsim.mappings.LocalParticleDescriptors(mask_dist, particle_embed)
 
     # Define distribution (and mapping to it)
@@ -234,7 +248,13 @@ def build_model(n_atoms, n_H_bonds=0, embed_dim=20, hidden_dim=100):
     return model
 
 
-def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_target=False, constrain_H_bonds=False):
+def train_model(read_dir='./',
+                save_dir='./',
+                save_name='sidechain',
+                include_cg_target=False,
+                constrain_H_bonds=False,
+                num_epochs=20,
+               ):
     """
     Creates and trains a model for decoding a sidechain.
     """
@@ -273,7 +293,7 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_
 
     # Set optimizer and compile
     if include_cg_target:
-        loss = LogProbPenalizedCGLoss(bat_obj, mask_H=constrain_H_bonds)
+        loss = LogProbPenalizedCGLoss(bat_obj, mask_H=constrain_H_bonds, n_samples=100)
         metrics = MeanLogProb(loss.non_h_inds)
     else:
         loss = vaemolsim.losses.LogProbLoss()
@@ -298,7 +318,7 @@ def train_model(read_dir='./', save_dir='./', save_name='sidechain', include_cg_
         callback_list.append(CGPenaltyAnnealing(5, 10, 0.0, 0.0))
 
     # Fit the model
-    history = model.fit(train_dset, epochs=15, validation_data=val_dset, verbose=2, callbacks=callback_list)
+    history = model.fit(train_dset, epochs=num_epochs, validation_data=val_dset, verbose=2, callbacks=callback_list)
 
     print(model.summary())
 
@@ -319,11 +339,41 @@ def main(arg_list):
 
     args = parser.parse_args(arg_list)
 
+    # Will define dictionary of training epochs based on residue type
+    # Some residues have fewer samples, so benefit from more training
+    # Others are simply more complicated and also benefit from more training
+    # 20 epochs will be "standard"
+    n_epochs_dict = {'ALA': 20,
+                     'ARG': 40, # Larger, more flexible
+                     'ASH': 2000, # order 1e2 training samples instead of order 1e5
+                     'ASN': 20,
+                     'ASP': 30, # Charges and strongly directional interactions
+                     'CYS': 100, # order 1e4 rather than 1e5 samples
+                     'GLH': 2000, # order 1e2 training samples instead of 1e5
+                     'GLN': 20,
+                     'GLU': 30, # Charges and strongly directional interactions
+                     'HID': 30,  # Bulky and polar
+                     'HIE': 300, # order 1e4 rather than 1e5 samples
+                     'HIP': 2000, # order 1e3 rather than 1e5 samples
+                     'ILE': 20,
+                     'LEU': 20,
+                     'LYS': 30, # Larger, more flexible
+                     'MET': 30, # Somewhat fewer samples, but also larger with less common chemistry
+                     'PHE': 40, # Bulkier sidechain
+                     'PRO': 30, # Unusually rigid
+                     'SER': 20,
+                     'THR': 20,
+                     'TRP': 100, # Bulkiest sidechain, fewer training examples
+                     'TYR': 40, # Bulky sidechain
+                     'VAL': 20,
+                    }
+
     train_model(read_dir=args.read_dir,
                 save_dir=args.save_dir,
                 save_name=args.res_type,
                 include_cg_target=args.cg_target,
                 constrain_H_bonds=args.h_bonds,
+                num_epochs=n_epochs_dict[args.res_type],
                )
 
 

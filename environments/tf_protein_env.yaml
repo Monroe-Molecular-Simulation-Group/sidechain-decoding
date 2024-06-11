@@ -23,6 +23,6 @@ dependencies:
   - pdbfixer
   - pip
   - pip:
-      - tensorflow
-      - tensorflow-probability
+      - tensorflow<=2.15
+      - tensorflow-probability<=0.23
       - geometric-algebra-attention

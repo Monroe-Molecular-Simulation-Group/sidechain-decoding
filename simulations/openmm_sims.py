@@ -135,6 +135,8 @@ def protein_sim(pdb_file,
         # Check here before file gets created by reporter
         if os.path.exists('%s/replica_info_%s.nc'%(out_dir, out_name)):
             do_restart = True
+        else:
+            do_restart = False
 
         # Add reporter object to manage output
         reporter = multistate.MultiStateReporter('%s/replica_info_%s.nc'%(out_dir, out_name),

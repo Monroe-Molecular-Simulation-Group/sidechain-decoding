@@ -516,7 +516,11 @@ def analyze_model(arg_list):
     # Want to select 10 random training examples to produce MANY samples from
     # Do by selecting indices
     rng = np.random.default_rng(seed=args.rng_seed)
-    extra_batch_inds = rng.choice(full_bat.shape[0] // batch_size, size=10, replace=False).tolist()
+    num_batches = full_bat.shape[0] // batch_size
+    if num_batches >= 10:
+        extra_batch_inds = rng.choice(num_batches, size=10, replace=False).tolist()
+    else:
+        extra_batch_inds = np.arange(num_batches).tolist()
     print('Batches with indices will be sampled extra: %s'%str(extra_batch_inds))
     extra_sample_inds = rng.choice(batch_size, size=10, replace=False).tolist()
     if full_bat.shape[0] - 1 in extra_batch_inds:
