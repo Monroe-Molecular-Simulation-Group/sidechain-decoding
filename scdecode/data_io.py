@@ -41,6 +41,7 @@ def inputs_from_pdb(pdb_file, res_name, mod_info,
                     bb_atom_str=backbone_atoms,
                     not_bat_atom_str=not_bat_atoms,
                     cg_atom_list=cg_atoms[1:].split(','),
+                    positions=None,
                     rng=np.random.default_rng(),
                     ):
     """
@@ -66,6 +67,9 @@ def inputs_from_pdb(pdb_file, res_name, mod_info,
         atoms of terminal residues. For GLY, instead want '@N,H,OXT,H1,H2,H3'
     cg_atom_list : list, default ['N', 'CA', 'C', 'O', 'H', 'CB', 'OXT']
         A list of atom names that will be included in the "CG" representation of a protein.
+    positions : np.array
+        Numpy array specifying coordinates of the protein structure. If provided, will ignore
+        the coordinates in the actual PDB file.
     rng : object, default np.random.default_rng()
         Random number generator
 
@@ -105,7 +109,10 @@ def inputs_from_pdb(pdb_file, res_name, mod_info,
     mm_pdb = mmapp.PDBFile(pdb_file)
 
     # Load into ParmEd
-    struc = pmd.openmm.load_topology(mm_pdb.topology, xyz=mm_pdb.positions)
+    if positions is not None:
+        struc = pmd.openmm.load_topology(mm_pdb.topology, xyz=positions)
+    else:
+        struc = pmd.openmm.load_topology(mm_pdb.topology, xyz=mm_pdb.positions)
 
     # Separate out sidechain atoms and compute CG bead locations
     sc_struc = struc['!(%s)'%bb_atom_str]
@@ -465,6 +472,7 @@ def main(arg_list):
     parser.add_argument('res_type', help="residue type to prepare inputs for")
     parser.add_argument('--read_dir', '-r', default='./', help="directory to read files from")
     parser.add_argument('--save_dir', '-s', default='./', help="directory to save outputs to")
+    parser.add_argument('--traj', help="trajectory file to take coordinates for SINGLE pdb structure in read_dir")
 
     args = parser.parse_args(arg_list)
 
@@ -483,52 +491,88 @@ def main(arg_list):
     print('For reproducible results, create a seed with np.random.SeedSequence(entropy=%i)'%seed.entropy)
     print('Then pass that seed to np.random.default_rng(seed=seed), replacing the appropriate lines of code.\n')
 
+    if args.res_type == 'GLY':
+        this_not_bat = '@N,H,OXT,H1,H2,H3'
+    else:
+        this_not_bat = not_bat_atoms
+           
     saved_bat_obj = False
-    for p in pdb_list:
-        pdb_id = os.path.split(p)[-1].split('.pdb')[0]
-        this_mod = mod_info[pdb_id]
 
-        if args.res_type == 'GLY':
-            this_not_bat = '@N,H,OXT,H1,H2,H3'
-        else:
-            this_not_bat = not_bat_atoms
-       
-        try:
-            inputs = inputs_from_pdb(p, args.res_type, this_mod, rng=rng, not_bat_atom_str=this_not_bat)
-        except Exception as exc:
-            print('On file %s, failed with exception:\n%s'%(p, str(exc)))
-            inputs = None
-
-        # Check to make sure had residues to work with
-        if inputs is not None:
-
-            # Want to save as something that tensorflow can read easily and quickly without memory issues
-            # Best way is to save as serialized tf.train.Example objects in a tf.data.Dataset in TFRecord file
-            refs, coords, info, bat_targets = _data_as_tensors(inputs[0], inputs[1], inputs[2], inputs[4])
-            save_dataset(refs, coords, info, bat_targets,
-                         os.path.join(args.save_dir, '%s_%s.tfrecord'%(pdb_id, args.res_type))
-                        )
-
-            # np.savez_compressed(os.path.join(args.save_dir, '%s_%s_inputs.npz'%(pdb_id, args.res_type)),
-            #                     cg=inputs[0],
-            #                     coords=inputs[1],
-            #                     one_hot=inputs[2],
-            #                     full_bat=inputs[3],
-            #                     bat=inputs[4],
-            #                    )
-
-            # Specifically save the full set of BAT coordinates
-            np.save(os.path.join(args.save_dir, '%s_%s_full_BAT.npy'%(pdb_id, args.res_type)),
-                    inputs[3],
-                    allow_pickle=False
-                   )
-
-            # Pickle the most recent BAT object
-            # Only need to do once per residue type
-            # So do as soon as inputs not None
+    # If a trajectory is provided, loop over it assuming single pdb structure used as topology
+    # Will create training dataset for just this one structure and its trajectory
+    if args.traj is not None:
+        pdb_id = os.path.split(pdb_list[0])[-1].split('.pdb')[0]
+        this_mod = {pdb_id: []}
+        uni = mda.Universe(pdb_list[0], args.traj)
+        all_refs = []
+        all_coords = []
+        all_info = []
+        all_bat_targets = []
+        all_full_bat = []
+        for frame in uni.trajectory:
+            inputs = inputs_from_pdb(pdb_list[0], args.res_type, this_mod, rng=rng, not_bat_atom_str=this_not_bat,
+                                     positions=frame.positions)
+            all_refs.extend(inputs[0])
+            all_coords.extend(inputs[1])
+            all_info.extend(inputs[2])
+            all_bat_targets.extend(inputs[4])
+            all_full_bat.append(inputs[3])
+            
             if not saved_bat_obj:
                 pickle.dump(inputs[-1], open(os.path.join(args.save_dir, '%s_BAT_object.pkl'%(args.res_type)), 'wb'))
                 saved_bat_obj = True
+
+        save_dataset(*_data_as_tensors(all_refs, all_coords, all_info, all_bat_targets),
+                     os.path.join(args.save_dir, '%s_traj_%s.tfrecord'%(pdb_id, args.res_type))
+                    )
+
+        np.save(os.path.join(args.save_dir, '%s_traj_%s_full_BAT.npy'%(pdb_id, args.res_type)),
+                np.concatenate(all_full_bat, axis=0),
+                allow_pickle=False
+               )
+
+    # Otherwise, loop over all pdb files individually
+    else:
+        for p in pdb_list:
+            pdb_id = os.path.split(p)[-1].split('.pdb')[0]
+            this_mod = mod_info[pdb_id]
+    
+            try:
+                inputs = inputs_from_pdb(p, args.res_type, this_mod, rng=rng, not_bat_atom_str=this_not_bat)
+            except Exception as exc:
+                print('On file %s, failed with exception:\n%s'%(p, str(exc)))
+                inputs = None
+    
+            # Check to make sure had residues to work with
+            if inputs is not None:
+    
+                # Want to save as something that tensorflow can read easily and quickly without memory issues
+                # Best way is to save as serialized tf.train.Example objects in a tf.data.Dataset in TFRecord file
+                refs, coords, info, bat_targets = _data_as_tensors(inputs[0], inputs[1], inputs[2], inputs[4])
+                save_dataset(refs, coords, info, bat_targets,
+                             os.path.join(args.save_dir, '%s_%s.tfrecord'%(pdb_id, args.res_type))
+                            )
+    
+                # np.savez_compressed(os.path.join(args.save_dir, '%s_%s_inputs.npz'%(pdb_id, args.res_type)),
+                #                     cg=inputs[0],
+                #                     coords=inputs[1],
+                #                     one_hot=inputs[2],
+                #                     full_bat=inputs[3],
+                #                     bat=inputs[4],
+                #                    )
+    
+                # Specifically save the full set of BAT coordinates
+                np.save(os.path.join(args.save_dir, '%s_%s_full_BAT.npy'%(pdb_id, args.res_type)),
+                        inputs[3],
+                        allow_pickle=False
+                       )
+    
+                # Pickle the most recent BAT object
+                # Only need to do once per residue type
+                # So do as soon as inputs not None
+                if not saved_bat_obj:
+                    pickle.dump(inputs[-1], open(os.path.join(args.save_dir, '%s_BAT_object.pkl'%(args.res_type)), 'wb'))
+                    saved_bat_obj = True
 
 
 if __name__ == '__main__':
