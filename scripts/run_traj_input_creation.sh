@@ -28,7 +28,7 @@ resnames=("TYR", "ASP", "PRO", "GLU", "THR", "TRP")
 for r in ${resnames[@]}
 do
     mkdir ${savedir}/${r}
-    srun -n 1 -c 1 -o gen_inputs_${r}.out --exact --export=ALL python -m scdecode.data_io ${datadir}/energy_min_pdbs/residue_modifications.json ${r} -r ${datadir}/traj_training_inputs -s ${savedir}/${r} &
+    srun -n 1 -c 1 -o gen_inputs_${r}.out --exact --export=ALL python -m scdecode.data_io ${datadir}/energy_min_pdbs/residue_modifications.json ${r} -r ${datadir}/traj_training_inputs -s ${savedir}/${r} --traj ~/Sidechain_Decoding/simulations/openmm_tremd/1UAO/1UAO_tremd.nc &
     sleep 2
 done
 wait
