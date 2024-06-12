@@ -18,7 +18,7 @@ module load nvhpc/22.7
 module load cuda/11.8
 module load cudnn/8.6.0
 module load python/3.12-anaconda
-conda activate new_tf_protein_env
+conda activate old_tf_protein_env
 
 datadir="/storage/jm217/data_Sidechain_Decoding"
 savedir="/scratch/${SLURM_JOB_ID}"
