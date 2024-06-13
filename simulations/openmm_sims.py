@@ -67,12 +67,16 @@ def protein_sim(pdb_file,
                 T=300.0,
                 n_steps=10000000,
                 out_dir='./',
+                flex_res=None,
                 ):
     """
     Runs simulation in implicit solvent (or vacuum).
     If restrain_cg is True, restrains the CG atoms (mostly backbone).
     Note that will NOT energy minimize before simulating!
     If tremd is true, temperature replica exchange MD will be performed with openmmtools.
+    Setting flex_res to a list of integers allows only those residues to have unrestrained sidechains
+    (all other residue sidechains will be restrained if restrain_cg is True)
+    If restain_cg is False, flex_res has no effect
     """
     forcefield = mmapp.ForceField('amber14/protein.ff14SB.xml')
     
@@ -106,9 +110,15 @@ def protein_sim(pdb_file,
         restraint.addPerParticleParameter('y0')
         restraint.addPerParticleParameter('z0')
         restrain_names = cg_atoms[1:].split(',')
-        for a in pdb.topology.atoms():
-            if a.name in restrain_names:
-                restraint.addParticle(a.index, pdb.positions[a.index])
+        if flex_res is None:
+            flex_res = np.arange(pdb.topology.getNumResidues())
+        print("Only residues %s will be flexible, others will have sidechains restrained."%str(flex_res))
+        for r in pdb.topology.residues():
+            for a in r.atoms():
+                if a.name in restrain_names:
+                    restraint.addParticle(a.index, pdb.positions[a.index])
+                elif r.index not in flex_res:
+                    restraint.addParticle(a.index, pdb.positions[a.index])
         time_step = 0.001 * mm.unit.picosecond
         write_freq = 10000
     else:
@@ -230,8 +240,11 @@ def main(arg_list):
     parser.add_argument('--restrain', action='store_true', help='whether or not to restrain the CG atoms (mostly backbone)')
     parser.add_argument('--tremd', action='store_true', help='whether or not to perform temperature replica exchange')
     parser.add_argument('--output_dir', '-o', default='./', help='directory where outputs will be written to')
+    parser.add_argument('--flex_res', type=int, nargs='*', default=None, help='residue number(s) to keep flexible')
 
     args = parser.parse_args(arg_list)
+    if args.flex_res is not None:
+        flex_res = [ri - 1 for ri in args.flex_res]
 
     protein_sim(args.pdb_file,
                 n_steps=args.num_steps,
@@ -239,6 +252,7 @@ def main(arg_list):
                 restrain_cg=args.restrain, # Default false, so turns on if set
                 tremd=args.tremd, # Default false, so turns on if set
                 out_dir=args.output_dir,
+                flex_res=flex_res,
                )
 
 
