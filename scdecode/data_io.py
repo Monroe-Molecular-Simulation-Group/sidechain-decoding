@@ -447,7 +447,7 @@ def read_dataset(files, include_cg_target=False):
         # Need to obtain all full BAT files and load in that data
         # Assumes file naming consistent with list of files (order will matter!)
         # (i.e., name is "something.tfrecord" and "something_full_BAT.npy")
-        full_bat_files = [f[:-9]+'_full_BAT.npy' for f in files]
+        full_bat_files = [f.split('.tfrecord')[0]+'_full_BAT.npy' for f in files]
         full_bat = np.vstack([np.load(f) for f in full_bat_files])
         full_bat_dset = tf.data.Dataset.from_tensor_slices(tf.convert_to_tensor(full_bat, dtype=tf.float32))
         only_cg_dset = parsed_dset.map(lambda x, y: x[0])
