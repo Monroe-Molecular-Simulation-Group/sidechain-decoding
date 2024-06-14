@@ -33,7 +33,7 @@ echo "Training sidechain ${resnames[$SLURM_ARRAY_TASK_ID]}"
 python -m scdecode.model_training "${resnames[$SLURM_ARRAY_TASK_ID]}" -r "/local_scratch/${SLURM_JOB_ID}/${resnames[$SLURM_ARRAY_TASK_ID]}" -s ./ --cg_target --h_bonds
 unset LD_LIBRARY_PATH
 
-cp * $SLURM_SUBMIT_DIR
+cp -r * $SLURM_SUBMIT_DIR
 cd ../
 rm -r output ${resnames[$SLURM_ARRAY_TASK_ID]}
 
