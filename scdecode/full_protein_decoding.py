@@ -6,6 +6,7 @@ import sys, os
 import argparse
 import pickle
 import glob
+import copy
 
 import numpy as np
 import tensorflow as tf
@@ -656,6 +657,157 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
     decoded_uni.select_atoms('all').write(out_traj_name, frames='all')
 
 
+def analyze_individual_residues(pdb_file, bat_dir='./', model_dir='./', out_name=None, n_samples=100000):
+    """
+    For a single configuration, performs n_samples decodings for each residue separately.
+    This assesses the performance of a trained decoding model for specific residues with all
+    other atomic positions provided rather than fully decoding an entire protein. This procedure
+    is amenable to reweighting individual residue decodings rather than an entire protein.
+    """
+
+    # Set name for outputs associated with pdb file
+    if out_name is None:
+        out_name = pdb_file.split('.pdb')[0].split('/')[-1]
+
+    # Create an OpenMM simulation object
+    pdb_obj, sim = analysis_tools.sim_from_pdb(pdb_file)
+   
+    # Collect residue types and one-hot encoding for them
+    ff_data = data_io.ff._SystemData(pdb_obj.topology)
+    templates_for_residues = data_io.ff._matchAllResiduesToTemplates(ff_data, pdb_obj.topology, dict(), False)
+    res_types = [templates_for_residues[r.index].name for r in pdb_obj.topology.residues()]
+    one_hot_cg = one_hot_from_types(res_types)
+
+    # And atom types and their one-hot encoding
+    atom_types = np.array([ff_data.atomType[a] for a in pdb_obj.topology.atoms()])
+    one_hot_aa = one_hot_from_types(atom_types)
+
+    # Get unique residue list for loading appropriate BAT objects and models
+    unique_res = get_unique_res(res_types)
+
+    # Load dictionaries of BAT objects and decoding models, if not already provided
+    bat_dict = gather_bat_objects(unique_res, search_dir=bat_dir)
+    model_dict, h_info_dict = gather_models(unique_res,
+                                            bat_dict,
+                                            model_dir=model_dir,
+                                            include_cg_target=True,
+                                            constrain_H_bonds=True,
+                                           )
+
+    # Also need ParmEd structure
+    pmd_struc = pmd.openmm.load_topology(pdb_obj.topology, system=sim.system, xyz=pdb_obj.positions)
+
+    # Preserve copy of coordinates that won't be changed
+    fixed_coords = copy.deepcopy(pmd_struc.coordinates)
+
+    # Generate a CG structure from the all-atom one
+    # Note that CG center of mass beads will be last N_residues coordinates
+    cg_struc = analysis_tools.create_cg_structure(pmd_struc)
+
+    # Store outputs in dictionaries
+    all_energies = {}
+    all_decomp = {}
+    all_logprobs = {}
+
+    # For reference structure, get energy and decomposition
+    ref_energy = analysis_tools.config_energy(fixed_coords,
+                                              sim,
+                                              compute_forces=False,
+                                              constrain_H_bonds=True,
+                                              )
+    all_energies['ref_energy'] = ref_energy
+    ref_decomp = pmd.openmm.energy_decomposition_system(pmd_struc, sim.system, nrg=mm.unit.kilojoules_per_mole)
+    for key, eng in ref_decomp:
+        all_decomp['ref_%s'%key] = np.array(eng)
+    all_decomp.pop('ref_CMMotionRemover', None)
+
+    # Loop over each residue
+    num_res = len(pmd_struc.residues)
+    for i, res in enumerate(pmd_struc.residues):
+
+        res_key = "%s%i"%(res.name, res.idx+1)
+
+        # Use BAT object to get names of root atoms, then get indices from a view over the CG structure
+        this_root_names = [a.name for a in bat_dict[res.name]._root]
+        this_root_inds = [pmd_struc.view[':%i@%s'%(i + 1, a)].atoms[0].idx for a in this_root_names]
+        this_root_coords = pmd_struc.coordinates[this_root_inds]
+
+        # Also obtain names of atoms that will be decoded, get their indices
+        # Note that the XYZ coordinates produced by the bat object will contain the root atoms
+        # No harm in just including those (will overwrite same value)
+        this_decode_names = [a.name for a in bat_dict[res.name]._ag]
+        this_decode_inds = [pmd_struc.view[':%i@%s'%(i + 1, a)].atoms[0].idx for a in this_decode_names]
+
+        # Generate inputs for decoding model
+        if res.name == 'GLY':
+            this_model_inputs = np.zeros((1, 3*(len(this_decode_inds) - len(this_root_inds)) - len(h_info_dict[res.name][0])))
+        else:
+            # Get CG bead location of this residue
+            this_cg_bead = cg_struc.coordinates[-(num_res - i)]
+            # And get other atom and CG bead locations and one-hot encodings
+            this_other_input = np.concatenate([np.delete(fixed_coords, this_decode_inds, axis=0),
+                                               cg_struc.coordinates[-num_res:]]
+                                             )
+            this_other_onehot = np.concatenate([np.delete(one_hot_aa, this_decode_inds, axis=0),
+                                               one_hot_cg,]
+                                              )
+            this_model_inputs = (this_cg_bead[None, ...], this_other_input[None, ...], this_other_onehot[None, ...])
+        
+        # Generate predicted probability distribution for BAT coordinates
+        this_dist = model_dict[res.name](this_model_inputs)
+
+        # Sample n_samples times from it
+        sample = tf.squeeze(this_dist.sample(n_samples))
+        logprobs = this_dist.log_prob(sample)
+
+        # Fill in hydrogens
+        full_bat_sample = coord_transforms.fill_in_h_bonds_tf(sample, *h_info_dict[res.name])
+
+        # Convert BAT coordinates to xyz
+        full_bat_sample = coord_transforms.fill_in_bat(full_bat_sample,
+                            np.tile(this_root_coords, (n_samples, 1, 1)).astype('float32'))
+        sample_xyz = coord_transforms.bat_cartesian_tf(full_bat_sample, bat_dict[res.name])
+
+        # Save sample BAT coordinates, including root positions
+        np.save("BAT_sample_%s_%s.npy"%(out_name, res_key), np.array(full_bat_sample), allow_pickle=False)
+
+        # Insert decoded coordinates into structure and calculate energies
+        decoded_energies = []
+        decoded_decomp = {}
+        for j in range(n_samples):
+            this_config = pmd_struc.coordinates
+            this_config[this_decode_inds] = sample_xyz[j]
+            this_energy = analysis_tools.config_energy(this_config,
+                                                       sim,
+                                                       compute_forces=False,
+                                                       constrain_H_bonds=True,
+                                                       )
+            decoded_energies.append(this_energy)
+            # Add energy decomposition as well
+            pmd_struc.coordinates = this_config
+            this_decomp = pmd.openmm.energy_decomposition_system(pmd_struc, sim.system, nrg=mm.unit.kilojoules_per_mole)
+            for key, eng in this_decomp:
+                if key in decoded_decomp:
+                    decoded_decomp[key].append(eng)
+                else:
+                    decoded_decomp[key] = [eng]
+        
+        # Store energies, decomposition, and log_probabilities
+        decoded_energies = np.array(decoded_energies)
+        for key, eng in decoded_decomp.items():
+            all_decomp['decoded_%s_%s'%(key, res_key)] = np.array(eng)
+        all_decomp.pop('decoded_CMMotionRemover_%s'%res_key, None)
+        all_energies['decoded_energy_%s'%res_key] = decoded_energies
+        all_logprobs['decoded_probs_%s'%res_key] = np.array(logprobs)
+        
+    # Save everything as npz file
+    np.savez('individual_res_energy_analysis_%s.npz'%out_name,
+             **all_energies,
+             **all_decomp,
+             **all_logprobs,
+            )
+
+
 def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='dataset_decoding_analysis', n_samples=100):
     """
     Given a list of pdb files (paths), generates full decoding models from provided BAT and
@@ -887,6 +1039,7 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
              **out_cg_diffs_by_res,
             )
 
+
 def decode_CG_traj(aa_pdb_file, cg_pdb_file, cg_traj_file, bat_dir='./', model_dir='./', n_samples=1):
     """
     Decodes n_samples configurations per frame of a CG trajectory.
@@ -986,6 +1139,26 @@ def run_traj_analysis(arg_list):
                       )
 
 
+def run_individual_residue_analysis(arg_list):
+    parser = argparse.ArgumentParser(prog='full_protein_decoding.run_individual_residue_analysis',
+                                     description='Performs analysis using trained residue models to decode one residue at a time',
+                                    )
+    parser.add_argument('pdb_file', help='path to pdb file of full-atom reference configuration')
+    parser.add_argument('--bat_dir', '-b', help='path to directory containing directories named by residue type with pickled BAT objects')
+    parser.add_argument('--model_dir', '-m', help='path to directory containing trained model directories')
+    parser.add_argument('--output', '-o', help='path of output file (WILL OVERWRITE)')
+    parser.add_argument('--n_samples', '-n', type=int, default=1, help='number of decoded samples for each residue')
+
+    args = parser.parse_args(arg_list)
+
+    analyze_individual_residues(args.pdb_file,
+                                bat_dir=args.bat_dir,
+                                model_dir=args.model_dir,
+                                out_name=args.output,
+                                n_samples=args.n_samples,
+                               )
+
+
 def run_dataset_analysis(arg_list):
     parser = argparse.ArgumentParser(prog='full_protein_decoding.run_dataset_analysis',
                                      description='Performs analysis over dataset of proteins',
@@ -1038,5 +1211,7 @@ if __name__ == '__main__':
         run_dataset_analysis(sys.argv[2:])
     elif sys.argv[1] == 'decode':
         run_cg_traj_decoding(sys.argv[2:])
+    elif sys.argv[1] == 'residue':
+        run_individual_residue_analysis(sys.argv[2:])
     else:
-        print("Argument \'%s\' unrecognized. For the first argument, select \'trajectory\', \'dataset\', or \'decode\'."%sys.argv[1])
+        print("Argument \'%s\' unrecognized. For the first argument, select \'trajectory\', \'dataset\', \'decode\', or \'residue\'."%sys.argv[1])
