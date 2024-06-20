@@ -757,7 +757,7 @@ def analyze_individual_residues(pdb_file, bat_dir='./', model_dir='./', out_name
         this_dist = model_dict[res.name](this_model_inputs)
 
         # Sample n_samples times from it, in batches to avoid overflows
-        full_bat_sample = []
+        sample = []
         logprobs = []
         n_sub_sample = 10000
         tot_sampled = 0
@@ -769,21 +769,21 @@ def analyze_individual_residues(pdb_file, bat_dir='./', model_dir='./', out_name
 
             tot_sampled += this_n_sample
 
-            sample = tf.squeeze(this_dist.sample(this_n_sample))
-            logprobs.append(this_dist.log_prob(sample))
+            this_sample = tf.squeeze(this_dist.sample(this_n_sample))
+            logprobs.append(this_dist.log_prob(this_sample))
+            sample.append(this_sample)
 
-            # Fill in hydrogens
-            this_bat_sample = coord_transforms.fill_in_h_bonds_tf(sample, *h_info_dict[res.name])
-
-            # Convert BAT coordinates to xyz
-            this_bat_sample = coord_transforms.fill_in_bat(this_bat_sample,
-                                   np.tile(this_root_coords, (n_samples, 1, 1)).astype('float32'))
-
-            full_bat_sample.append(this_bat_sample)
-
-        full_bat_sample = tf.concat(full_bat_sample, axis=0)
+        sample = tf.concat(sample, axis=0)
         logprobs = tf.concat(logprobs, axis=0)
         
+        # Fill in hydrogens
+        full_bat_sample = coord_transforms.fill_in_h_bonds_tf(sample, *h_info_dict[res.name])
+
+        # Convert BAT coordinates to xyz
+        full_bat_sample = coord_transforms.fill_in_bat(full_bat_sample,
+                                np.tile(this_root_coords, (n_samples, 1, 1)).astype('float32'))
+
+
         sample_xyz = coord_transforms.bat_cartesian_tf(full_bat_sample, bat_dict[res.name])
 
         # Save sample BAT coordinates, including root positions
