@@ -793,7 +793,7 @@ def analyze_individual_residues(pdb_file, bat_dir='./', model_dir='./', out_name
         decoded_energies = []
         decoded_decomp = {}
         for j in range(n_samples):
-            this_config = copy.deepcopy(fixed_coordinates)
+            this_config = copy.deepcopy(fixed_coords)
             this_config[this_decode_inds] = sample_xyz[j]
             this_energy = analysis_tools.config_energy(this_config,
                                                        sim,
