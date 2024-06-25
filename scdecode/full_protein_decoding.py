@@ -702,7 +702,7 @@ def analyze_individual_residues(pdb_file, bat_dir='./', model_dir='./', out_name
 
     # Generate a CG structure from the all-atom one
     # Note that CG center of mass beads will be last N_residues coordinates
-    cg_struc = analysis_tools.create_cg_structure(pmd_struc)
+    cg_config = analysis_tools.map_to_cg_configs(mda.Universe(pmd_struc))
 
     # Store outputs in dictionaries
     all_energies = {}
@@ -725,28 +725,29 @@ def analyze_individual_residues(pdb_file, bat_dir='./', model_dir='./', out_name
     num_res = len(pmd_struc.residues)
     for i, res in enumerate(pmd_struc.residues):
 
-        res_key = "%s%i"%(res.name, res.idx+1)
+        res_key = "%s%i"%(res.name, i+1)
 
         # Use BAT object to get names of root atoms, then get indices from a view over the CG structure
         this_root_names = [a.name for a in bat_dict[res.name]._root]
         this_root_inds = [pmd_struc.view[':%i@%s'%(i + 1, a)].atoms[0].idx for a in this_root_names]
-        this_root_coords = pmd_struc.coordinates[this_root_inds]
+        this_root_coords = fixed_coords[this_root_inds]
 
         # Also obtain names of atoms that will be decoded, get their indices
         # Note that the XYZ coordinates produced by the bat object will contain the root atoms
-        # No harm in just including those (will overwrite same value)
-        this_decode_names = [a.name for a in bat_dict[res.name]._ag]
+        # So also excluding those root atoms and getting indices within BAT object excluding them as well
+        this_decode_names = [a.name for a in bat_dict[res.name]._ag if a.name not in this_root_names]
         this_decode_inds = [pmd_struc.view[':%i@%s'%(i + 1, a)].atoms[0].idx for a in this_decode_names]
+        this_bat_non_root_inds = np.delete(np.arange(len(bat_dict[res.name].atoms)), bat_dict[res.name]._root_XYZ_inds)
 
         # Generate inputs for decoding model
         if res.name == 'GLY':
-            this_model_inputs = np.zeros((1, 3*(len(this_decode_inds) - len(this_root_inds)) - len(h_info_dict[res.name][0])))
+            this_model_inputs = bat_dict[res.name].results.bat[:, 9:][:, h_info_dict[res.name][1]]
         else:
             # Get CG bead location of this residue
-            this_cg_bead = cg_struc.coordinates[-(num_res - i)]
+            this_cg_bead = cg_config[0, -(num_res - i)]
             # And get other atom and CG bead locations and one-hot encodings
             this_other_input = np.concatenate([np.delete(fixed_coords, this_decode_inds, axis=0),
-                                               cg_struc.coordinates[-num_res:]]
+                                               cg_config[0, -num_res:]]
                                              )
             this_other_onehot = np.concatenate([np.delete(one_hot_aa, this_decode_inds, axis=0),
                                                one_hot_cg,]
@@ -784,10 +785,14 @@ def analyze_individual_residues(pdb_file, bat_dir='./', model_dir='./', out_name
                                 np.tile(this_root_coords, (n_samples, 1, 1)).astype('float32'))
 
 
-        sample_xyz = coord_transforms.bat_cartesian_tf(full_bat_sample, bat_dict[res.name])
-
         # Save sample BAT coordinates, including root positions
         np.save("BAT_sample_%s_%s.npy"%(out_name, res_key), np.array(full_bat_sample), allow_pickle=False)
+
+        # Convert to XYZ
+        sample_xyz = coord_transforms.bat_cartesian_tf(full_bat_sample, bat_dict[res.name]).numpy()
+
+        # Only extract non-root coordinates
+        sample_xyz = sample_xyz[:, this_bat_non_root_inds]
 
         # Insert decoded coordinates into structure and calculate energies
         decoded_energies = []
