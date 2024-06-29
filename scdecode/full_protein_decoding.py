@@ -3,6 +3,7 @@ Applies residue-based decodings to an entire protein coarse-grained model.
 """
 
 import sys, os
+import datetime
 import argparse
 import pickle
 import glob
@@ -492,6 +493,7 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
         res_atom_inds.append(this_inds)
 
     print("\nDone with prep.")
+    print(datetime.datetime.now())
 
     # Compute all energies and forces of simulated trajectory
     # For forces, store max force in each residue
@@ -525,6 +527,7 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
     out_sim_decomp.pop('sim_CMMotionRemover', None)
 
     print("\nSimulation energies computed. Working with decoding.")
+    print(datetime.datetime.now())
 
     # Generate a CG trajectory from the all-atom one
     cg_traj = analysis_tools.map_to_cg_configs(uni)
@@ -541,12 +544,13 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
     res_coordination = np.array(res_coordination)
 
     print("\nGenerated CG trajectory from all-atom simulation trajectory.")
+    print(datetime.datetime.now())
 
     # Generate a decoded trajectory with n_samples per frame
     cg_traj = np.tile(cg_traj, (n_samples, 1, 1))
     decoded_traj = []
     decoded_probs = []
-    n_chunk = 100
+    n_chunk = 200
     for i in range(0, cg_traj.shape[0], n_chunk):
         decoded_configs, this_probs = full_decode.decode_config(cg_traj[i:(i+n_chunk)])
         decoded_traj.append(decoded_configs.numpy())
@@ -556,6 +560,7 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
     decoded_probs = np.concatenate(decoded_probs, axis=0)
 
     print("\nDecoding complete. Calculating stats and energies of decoded configurations.")
+    print(datetime.datetime.now())
 
     # Obtain energies and max forces for the decoded trajectory
     decoded_energies = []
@@ -588,6 +593,7 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
     out_decoded_decomp.pop('decoded_CMMotionRemover', None)
 
     print("\nDecoded energies computed. Saving.")
+    print(datetime.datetime.now())
 
     # Save everything as npz file
     # To do that nicely, want forces as both arrays and dictionaries categorized by residue type
@@ -616,6 +622,7 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
             )
 
     print("\nPerforming BAT distribution analysis on sidechain of each residue.")
+    print(datetime.datetime.now())
 
     # Also want to compare distributions of BAT coordinates between original trajectory and decoded structures
     # Loop over each residue type, skipping GLY, and compute BAT coordinates with MDAnalysis BAT object
@@ -632,8 +639,9 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
         this_bat_uni = mda.Universe(this_bat_atoms, this_traj)
         bat_analysis = mda.analysis.bat.BAT(this_bat_uni.select_atoms('all'), initial_atom=this_bat_uni.select_atoms('name C')[0])
         bat_analysis.run()
-        this_hists, this_edges = analysis_tools.build_bat_histograms(bat_analysis.results.bat[:, 9:])
-        np.savez('sim_BAT_stats_%s%i.npz'%(res_type, i+1), **this_hists, **this_edges)
+        # this_hists, this_edges = analysis_tools.build_bat_histograms(bat_analysis.results.bat[:, 9:])
+        # np.savez('sim_BAT_stats_%s%i.npz'%(res_type, i+1), **this_hists, **this_edges)
+        np.save('sim_BAT_%s%i.npy'%(res_type, i+1), bat_analysis.results.bat, allow_pickle=False)
 
     # Redo with universe created from decoded trajectory
     decoded_uni = mda.Universe(pmd_struc.topology, decoded_traj) #, format=mda.coordinates.memory.MemoryReader)
@@ -646,8 +654,9 @@ def analyze_trajectory(pdb_file, traj_file, bat_dir='./', model_dir='./', out_na
         this_bat_uni = mda.Universe(this_bat_atoms, this_traj)
         bat_analysis = mda.analysis.bat.BAT(this_bat_uni.select_atoms('all'), initial_atom=this_bat_uni.select_atoms('name C')[0])
         bat_analysis.run()
-        this_hists, this_edges = analysis_tools.build_bat_histograms(bat_analysis.results.bat[:, 9:])
-        np.savez('decoded_BAT_stats_%s%i.npz'%(res_type, i+1), **this_hists, **this_edges)
+        # this_hists, this_edges = analysis_tools.build_bat_histograms(bat_analysis.results.bat[:, 9:])
+        # np.savez('decoded_BAT_stats_%s%i.npz'%(res_type, i+1), **this_hists, **this_edges)
+        np.save('decoded_BAT_%s%i.npy'%(res_type, i+1), bat_analysis.results.bat, allow_pickle=False)
 
     # Also a good idea to save the decoded configurations (can then use for re-weighting properties computed from them
     # along with energies and log-probabilities)
@@ -1092,7 +1101,7 @@ def decode_CG_traj(aa_pdb_file, cg_pdb_file, cg_traj_file, bat_dir='./', model_d
     cg_traj = np.tile(cg_traj, (n_samples, 1, 1))
     decoded_traj = []
     decoded_probs = []
-    n_chunk = 100
+    n_chunk = 200
     for i in range(0, cg_traj.shape[0], n_chunk):
         decoded_configs, this_probs = full_decode.decode_config(cg_traj[i:(i+n_chunk)])
         decoded_traj.append(decoded_configs.numpy())

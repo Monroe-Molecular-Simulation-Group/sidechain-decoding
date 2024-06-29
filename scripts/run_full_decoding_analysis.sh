@@ -28,7 +28,7 @@ cd output
 
 export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:$LD_LIBRARY_PATH
 
-# python -m scdecode.full_protein_decoding trajectory ~/Sidechain_Decoding/simulations/1UAO.pdb ~/Sidechain_Decoding/simulations/openmm_restrained/1UAO/1UAO_restrained.nc -b $inputdir -m $modeldir
+python -m scdecode.full_protein_decoding trajectory ~/Sidechain_Decoding/simulations/1UAO.pdb ~/Sidechain_Decoding/simulations/1UAO.pdb -b $inputdir -m $modeldir -n 1000000
 
 # python -m scdecode.full_protein_decoding trajectory ~/Sidechain_Decoding/simulations/1UAO.pdb ~/Sidechain_Decoding/simulations/openmm_restrained_tremd/1UAO/1UAO_restrained_tremd.nc -b $inputdir -m $modeldir
 
@@ -40,7 +40,7 @@ export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:$LD_LIBRARY_PATH
 
 # python -m scdecode.full_protein_decoding decode ~/Sidechain_Decoding/simulations/1UAO.pdb ~/Sidechain_Decoding/simulations/pyrosetta/1UAO/cg_traj_1UAO.pdb ~/Sidechain_Decoding/simulations/pyrosetta/1UAO/cg_traj_1UAO.pdb -b $inputdir -m $modeldir -n 5
 
-python -m scdecode.full_protein_decoding residue ~/Sidechain_Decoding/simulations/1UAO.pdb -b $inputdir -m $modeldir -n 100000
+# python -m scdecode.full_protein_decoding residue ~/Sidechain_Decoding/simulations/1UAO.pdb -b $inputdir -m $modeldir -n 100000
 
 unset LD_LIBRARY_PATH
 
