@@ -668,22 +668,42 @@ def plot_cg_diffs(cg_dat):
         ax[i, 0].plot(centers, spstats.norm.pdf(centers, mean, std), 'k--')
     
         # Seems like a Cauchy distribution fits much better, though hard to determine best-fit parameters
+        # Note not fitting based on likelihood, just noting that parameters match median and mad
         cum_dist = np.cumsum(hist / np.sum(hist))
         median = centers[np.argmin(np.abs(cum_dist - 0.5))]
         mad = np.sum((hist / np.sum(hist)) * np.abs(centers - median))
         ax[i, 0].plot(centers, spstats.cauchy.pdf(centers, median, mad), 'c--')
     
         # Or a Laplace distribution? This is probably the best fit
-        ax[i, 0].plot(centers, spstats.laplace.pdf(centers, mean, std/np.sqrt(2)), 'r--')
+        abs_mean = np.sum((hist / np.sum(hist)) * np.abs(centers - median))
+        ax[i, 0].plot(centers, spstats.laplace.pdf(centers, median, abs_mean), 'r--')
    
         # And plot cummulative distributions, too
         ax[i, 1].plot(centers, cum_dist)
         ax[i, 1].plot(centers, spstats.norm.cdf(centers, mean, std), 'k--')
         ax[i, 1].plot(centers, spstats.cauchy.cdf(centers, median, mad), 'c--')
-        ax[i, 1].plot(centers, spstats.laplace.cdf(centers, mean, std/np.sqrt(2)), 'r--')
+        ax[i, 1].plot(centers, spstats.laplace.cdf(centers, median, abs_mean), 'r--')
     
     fig.tight_layout()
     return fig
+
+
+def get_laplace_scale_from_hists(hist_file):
+    """
+    Given a .npz file containing histograms of x, y, and z differences of samples from the reference CG bead,
+    computes an approximate best-fit scale (or b) parameter for a Laplace distribution. Assumes median is zero
+    and averages over scale parameters for each coordinate dimension since all very similar.
+    """
+    dat = np.load(hist_file)
+    scale_fit = []
+    for coord in ['x', 'y', 'z']:
+        hist = dat['%s_hist'%coord]
+        edges = dat['%s_edges'%coord]
+        centers = 0.5*(edges[1:] + edges[:-1])
+        cum_dist = np.cumsum(hist / np.sum(hist))
+        abs_mean = np.sum((hist / np.sum(hist)) * np.abs(centers))
+        scale_fit.append(abs_mean)
+    return np.average(scale_fit)
 
 
 def plot_analysis(arg_list):
