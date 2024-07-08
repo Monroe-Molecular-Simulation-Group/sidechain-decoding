@@ -113,12 +113,33 @@ def protein_sim(pdb_file,
         if flex_res is None:
             flex_res = np.arange(pdb.topology.getNumResidues())
         print("Only residues %s will be flexible, others will have sidechains restrained."%str(flex_res))
+        sc_restraint = mm.CustomCentroidBondForce(1, 'k*((x1-x0)^2+(y1-y0)^2+(z1-z0)^2)')
+        system.addForce(sc_restraint)
+        sc_restraint.addGlobalParameter('k', 200000.0*mm.unit.kilojoules_per_mole/(mm.unit.nanometer**2))
+        sc_restraint.addPerBondParameter('x0')
+        sc_restraint.addPerBondParameter('y0')
+        sc_restraint.addPerBondParameter('z0')
         for r in pdb.topology.residues():
+            atom_ids = []
+            this_sum_pos_mass = np.zeros(3) * mm.unit.nanometers * mm.unit.amu
+            this_sum_masses = 0.0 * mm.unit.amu
             for a in r.atoms():
                 if a.name in restrain_names:
                     restraint.addParticle(a.index, pdb.positions[a.index])
+                    if a.name == 'CB':
+                        atom_ids.append(a.index)
+                        this_sum_pos_mass += pdb.positions[a.index] * system.getParticleMass(a.index)
+                        this_sum_masses += system.getParticleMass(a.index)
                 elif r.index not in flex_res:
                     restraint.addParticle(a.index, pdb.positions[a.index])
+                else:
+                    atom_ids.append(a.index)
+                    this_sum_pos_mass += pdb.positions[a.index] * system.getParticleMass(a.index)
+                    this_sum_masses += system.getParticleMass(a.index)
+            if r.index in flex_res:
+                this_com = this_sum_pos_mass / this_sum_masses
+                sc_restraint.addGroup(atom_ids)
+                sc_restraint.addBond([0], this_com)
         time_step = 0.001 * mm.unit.picosecond
         write_freq = 10000
     else:
