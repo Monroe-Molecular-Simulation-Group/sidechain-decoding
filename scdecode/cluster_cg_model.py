@@ -21,7 +21,7 @@ import tensorflow_probability as tfp
 from scdecode import analysis_tools
 
 
-def main(pdb_file, traj_file, out_name=None, n_samples=100000):
+def main(pdb_file, traj_file, out_name=None, sim_stride=10, n_samples=100000):
     """
     Performs clustering analysis and generates a CG model trajectory based on sampling
     from the clustered configurations. Sampling occurs based on two models, one with
@@ -33,7 +33,7 @@ def main(pdb_file, traj_file, out_name=None, n_samples=100000):
         out_name = pdb_file.split('.pdb')[0].split('/')[-1]
 
     # Load the all-atom trajectory
-    traj = mdtraj.load(traj_file, top=pdb_file)
+    traj = mdtraj.load(traj_file, top=pdb_file, stride=sim_stride)
     
     # Identify alpha carbons - will only use these for RMSD distances and clustering
     ca_inds = traj.top.select("name CA")
@@ -99,12 +99,14 @@ if __name__ == '__main__':
     parser.add_argument('traj_file', help='all-atom trajectory to cluster')
     parser.add_argument('--out_name', '-o', default=None, help='naming convention for output')
     parser.add_argument('--n_samples', '-n', type=int, default=100000, help='number of samples to draw')
+    parser.add_argument('--sim_stride', type=int, default=10, help='take every sim_stride frames from the trajectory')
 
     args = parser.parse_args(sys.argv[1:])
 
     main(args.pdb_file,
          args.traj_file,
          out_name=args.out_name,
+         sim_stride=args.sim_stride
          n_samples=args.n_samples,
         )
 
