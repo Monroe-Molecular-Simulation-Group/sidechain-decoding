@@ -106,7 +106,7 @@ if __name__ == '__main__':
     main(args.pdb_file,
          args.traj_file,
          out_name=args.out_name,
-         sim_stride=args.sim_stride
+         sim_stride=args.sim_stride,
          n_samples=args.n_samples,
         )
 
