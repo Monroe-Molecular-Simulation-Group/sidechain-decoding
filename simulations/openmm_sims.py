@@ -266,6 +266,8 @@ def main(arg_list):
     args = parser.parse_args(arg_list)
     if args.flex_res is not None:
         flex_res = [ri - 1 for ri in args.flex_res]
+    else:
+        flex_res = args.flex_res
 
     protein_sim(args.pdb_file,
                 n_steps=args.num_steps,
