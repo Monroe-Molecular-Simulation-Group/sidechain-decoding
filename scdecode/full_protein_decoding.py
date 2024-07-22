@@ -963,13 +963,24 @@ def analyze_protein_dataset(pdb_files, bat_dir='./', model_dir='./', out_name='d
         # Generate a CG configuration
         cg_config = analysis_tools.map_to_cg_configs(mda.Universe(pmd_struc))
         
+        # Build/compile full decoding method with single sample for more accurate timings
+        _ = full_decode.decode_config(np.tile(cg_config, (1, 1, 1)))
+
         # Decode n_samples of configurations
+        print("Starting decoding for %s with %i residues..."%(pdb_ids[-1], num_res[-1]))
+        print(datetime.datetime.now())
+
         cg_config = np.tile(cg_config, (n_samples, 1, 1))
         gen_configs, gen_probs = full_decode.decode_config(cg_config)
         gen_configs = gen_configs.numpy()
-        gen_cg_configs = analysis_tools.map_to_cg_configs(mda.Universe(pmd_struc, gen_configs)) 
         
         decoded_probs.append(gen_probs.numpy())
+
+        print("Decoding complete.")
+        print(datetime.datetime.now())
+
+        # Convert generated configs to CG as well
+        gen_cg_configs = analysis_tools.map_to_cg_configs(mda.Universe(pmd_struc, gen_configs)) 
 
         # Get bond, clash, and diversity scores now (just need generated configurations and reference)
         bond_score_stats.append(analysis_tools.bond_score(pmd_struc.topology, pmd_struc.coordinates, gen_configs))
