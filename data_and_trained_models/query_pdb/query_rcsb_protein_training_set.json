@@ -1,0 +1,58 @@
+{
+  "query": {
+    "type": "group",
+    "logical_operator": "and",
+    "nodes": [
+      {
+        "type": "terminal",
+        "service": "text",
+        "parameters": {
+          "operator": "less_or_equal",
+          "value": 10,
+          "attribute": "rcsb_assembly_info.polymer_entity_instance_count_protein"
+        }
+      },
+      {
+        "type": "terminal",
+        "service": "text",
+        "parameters": {
+          "operator": "less_or_equal",
+          "value": 5000,
+          "attribute": "rcsb_assembly_info.atom_count"
+        }
+      },
+      {
+        "type": "terminal",
+        "service": "text",
+        "parameters": {
+          "attribute": "rcsb_entry_info.selected_polymer_entity_types",
+          "operator": "exact_match",
+          "value": "Protein (only)"
+        }
+      }
+    ]
+  },
+  "request_options": {
+    "results_verbosity": "compact",
+    "group_by": {
+      "aggregation_method": "sequence_identity",
+      "similarity_cutoff": 50,
+      "ranking_criteria_type": {
+        "sort_by": "rcsb_entry_info.resolution_combined",
+        "direction": "asc"
+      }
+    },
+    "group_by_return_type": "representatives",
+    "return_all_hits": true, 
+    "facets": [
+      {
+        "name": "Number Atoms",
+        "aggregation_type": "histogram",
+        "attribute": "rcsb_assembly_info.atom_count",
+        "interval": 1000,
+        "min_interval_population": 1
+      }
+    ]
+  },
+  "return_type": "polymer_entity"
+}

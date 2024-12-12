@@ -1,0 +1,2 @@
+model_checkpoint_path: "ALA_weights.ckpt"
+all_model_checkpoint_paths: "ALA_weights.ckpt"
