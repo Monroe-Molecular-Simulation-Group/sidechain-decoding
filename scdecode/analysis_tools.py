@@ -524,8 +524,9 @@ def analyze_model(arg_list):
     m_hists, m_edges = build_bat_histograms(samples)
     np.savez('%s_BAT_model.npz'%args.save_prefix, **m_hists, **m_edges)
 
-    # Compute KS stats
+    # Compute and save KS stats
     ks_stats = compute_ks_stats(samples, full_bat[:, 9:])
+    np.savez('%s_BAT_KS_stats.npz'%args.save_prefix, **ks_stats)
 
     if not args.unconditional:
         # Get CG bead positions of predictions and compare to references
@@ -581,7 +582,7 @@ def analyze_model(arg_list):
     # And save extra sample histograms
     np.savez('%s_BAT_model_extra_samples.npz'%args.save_prefix, **extra_sample_hists, **extra_sample_edges)
 
-    # And save KS statistics
+    # And save KS statistics with extra samples
     np.savez('%s_BAT_KS_stats.npz'%args.save_prefix, **ks_stats)
 
 
