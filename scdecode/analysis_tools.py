@@ -78,6 +78,27 @@ def compute_bat_stats(arg_list):
     np.savez(args.save_file, **hist_dict, **edges_dict)
 
 
+def compute_ks_stats(all_bat, ref_bat):
+    """
+    Computes KS statistic for every BAT degree of freedom (except root atoms)
+    """
+    num_atoms = int(all_bat.shape[1] / 3)
+
+    all_stats = {}
+    for i in range(all_bat.shape[1]):
+        this_stats = spstats.kstest(all_bat[:, i], ref_bat[:, i])
+        if i < num_atoms:
+            label = "bond_%i"%(i + 1)
+        elif i >= num_atoms and i < 2*num_atoms:
+            label = "angle_%i"%(i - num_atoms + 1)
+        elif i >= 2*num_atoms:
+            label = "dihedral_%i"%(i - 2*num_atoms + 1)
+        all_stats["%s_statistic"%label] = this_stats.statistic
+        all_stats["%s_pvalue"%label] = this_stats.pvalue
+
+    return all_stats
+
+
 # To see which residues having trouble, or if atomic overlaps, helps to have forces
 # Have optional flag to return
 # That way, can visualize where have high energies/forces by coloring by force if want
@@ -435,6 +456,7 @@ def analyze_model(arg_list):
     # Save BAT data as reference distribution
     ref_hists, ref_edges = build_bat_histograms(full_bat[:, 9:])
     np.savez('%s_BAT_data.npz'%args.save_prefix, **ref_hists, **ref_edges)
+    np.save('%s_BAT_raw_data.npy'%args.save_prefix, full_bat, allow_pickle=False)
 
     # Load the BAT analysis object
     bat_obj_file = glob.glob('%s/*.pkl'%args.read_dir)[0]
@@ -502,6 +524,9 @@ def analyze_model(arg_list):
     m_hists, m_edges = build_bat_histograms(samples)
     np.savez('%s_BAT_model.npz'%args.save_prefix, **m_hists, **m_edges)
 
+    # Compute KS stats
+    ks_stats = compute_ks_stats(samples, full_bat[:, 9:])
+
     if not args.unconditional:
         # Get CG bead positions of predictions and compare to references
         cg_pos = check_cg_from_bat(np.hstack([full_bat[:, :9], samples]), bat_obj)
@@ -541,6 +566,11 @@ def analyze_model(arg_list):
             dist = model(this_input)
             extra_samples = np.squeeze(dist.sample(10000))
             extra_samples = coord_transforms.fill_in_h_bonds(extra_samples, h_inds, non_h_inds, h_bond_lengths)
+            # Get KS statistics
+            this_ks_stats = compute_ks_stats(extra_samples, full_bat[:, 9:])
+            for k in this_ks_stats.keys():
+                ks_stats['example%i_%s'%(extra_sample_count, k)] = this_ks_stats[k]
+            # Get histograms
             this_hist, this_edges = build_bat_histograms(extra_samples)
             # Once have histograms, label uniquely with keys
             for k in this_hist.keys():
@@ -550,6 +580,9 @@ def analyze_model(arg_list):
 
     # And save extra sample histograms
     np.savez('%s_BAT_model_extra_samples.npz'%args.save_prefix, **extra_sample_hists, **extra_sample_edges)
+
+    # And save KS statistics
+    np.savez('%s_BAT_KS_stats.npz'%args.save_prefix, **ks_stats)
 
 
 # Define functions to help with sorting when plotting
